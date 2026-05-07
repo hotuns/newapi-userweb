@@ -40,12 +40,12 @@ const valueProps = [
   },
   {
     title: '统一入口',
-    description: '一个账户查看模型、余额、套餐、访问令牌和使用记录，体验更连贯。',
+    description: '一个账户查看模型、余额、订阅、访问令牌和使用记录，体验更连贯。',
     icon: Layers3,
   },
   {
     title: '透明可控',
-    description: '价格预览、用量趋势、账单记录和套餐状态都能直接查看，不靠猜测。',
+    description: '价格预览、用量趋势、账单记录和订阅状态都能直接查看，不靠猜测。',
     icon: Gauge,
   },
 ]
@@ -71,7 +71,7 @@ const scenarios = [
 const experienceHighlights = [
   '主流模型统一接入',
   '价格与用量透明',
-  '余额与套餐可见',
+  '余额与订阅可见',
   '访问令牌独立管理',
 ]
 
@@ -90,7 +90,7 @@ const faqs = [
   },
   {
     question: '注册后可以做什么？',
-    answer: '注册后你可以进入 MoreToken 控制台，查看余额、套餐、模型、访问令牌、用量记录和账单概览。',
+    answer: '注册后你可以进入 MoreToken 控制台，查看余额、订阅、模型、访问令牌、用量记录和账单概览。',
   },
 ]
 

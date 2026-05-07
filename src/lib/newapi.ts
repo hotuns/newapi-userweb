@@ -22,6 +22,8 @@ const PROTECTED_PREFIXES = [
   '/api/data/self',
   '/api/user/topup/info',
   '/api/user/topup/self',
+  '/api/user/pay',
+  '/api/user/amount',
   '/api/subscription/self',
 ]
 

@@ -152,11 +152,13 @@ export type PricingResponse = {
 export type TopupInfo = {
   enable_online_topup: boolean
   enable_stripe_topup: boolean
+  discount?: Record<number, number>
   pay_methods: Array<{
     name: string
     type: string
     color?: string
     icon?: string
+    min_topup?: number | string
   }>
   min_topup: number
   stripe_min_topup: number

@@ -23,7 +23,7 @@ const steps = [
   },
   {
     title: '查看余额和记录',
-    description: '在控制台持续查看余额、套餐、账单和使用趋势。',
+    description: '在控制台持续查看余额、订阅、账单和使用趋势。',
     icon: LineChart,
   },
 ]
@@ -39,7 +39,7 @@ const faq = [
   },
   {
     question: '怎么知道自己花了多少？',
-    answer: '控制台会显示余额、套餐剩余、用量趋势和消费记录，账单信息也能随时回看。',
+    answer: '控制台会显示余额、订阅剩余、用量趋势和消费记录，账单信息也能随时回看。',
   },
 ]
 
@@ -133,7 +133,7 @@ export default async function TutorialPage() {
                   进入控制台，管理访问令牌、余额和账单
                 </h2>
                 <p className='mt-4 text-sm leading-7 text-[var(--muted)]'>
-                  登录后，你可以在控制台里查看余额、套餐、使用记录，并生成访问令牌。对普通用户来说，控制台就是最核心的操作入口。
+                  登录后，你可以在控制台里查看余额、订阅、使用记录，并生成访问令牌。对普通用户来说，控制台就是最核心的操作入口。
                 </p>
                 <div className='mt-6 flex flex-wrap gap-3'>
                   <Link href={authenticated ? '/dashboard' : '/login'}>
@@ -141,7 +141,7 @@ export default async function TutorialPage() {
                   </Link>
                   <div className='inline-flex items-center gap-2 rounded-full bg-[var(--surface-strong)] px-4 py-2 text-sm text-[var(--muted-strong)]'>
                     <CreditCard className='size-4 text-[var(--accent)]' />
-                    余额、套餐、账单一页可见
+                    余额、订阅、账单一页可见
                   </div>
                 </div>
               </CardContent>

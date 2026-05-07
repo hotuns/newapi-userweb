@@ -1,15 +1,17 @@
 'use client'
 
 import Link from 'next/link'
+import { Fragment } from 'react'
 import { useEffect, useDeferredValue, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import {
   Activity,
+  Bell,
+  ChevronDown,
   Copy,
   ExternalLink,
   KeyRound,
   RefreshCw,
-  ShieldCheck,
   Sparkles,
   Wallet,
 } from 'lucide-react'
@@ -31,7 +33,6 @@ import { buildGenericChatLaunchUrl, parseGenericChatTemplates } from '@/lib/chat
 import { buildQueryString, cn, formatDateTime, formatNumber } from '@/lib/utils'
 import type {
   ApiResponse,
-  LogStats,
   PaginatedResponse,
   QuotaDataPoint,
   SubscriptionPlan,
@@ -48,6 +49,7 @@ type RangeKey = 'today' | '3d' | '7d'
 
 type DashboardOverviewProps = {
   status: ApiResponse<SystemStatus>
+  notice: ApiResponse<string>
   profile: ApiResponse<UserProfile>
   userModels: ApiResponse<string[]>
   tokens: PaginatedResponse<TokenRecord>
@@ -57,7 +59,6 @@ type DashboardOverviewProps = {
   trendThreeDays: ApiResponse<QuotaDataPoint[]>
   trendSevenDays: ApiResponse<QuotaDataPoint[]>
   initialLogs: PaginatedResponse<UsageLog>
-  initialLogStats: ApiResponse<LogStats>
   topupInfo: ApiResponse<TopupInfo>
   topupRecords: PaginatedResponse<TopupRecord>
   apiBaseUrl: string
@@ -211,18 +212,22 @@ function formatCurrency(value: number) {
   }).format(value)
 }
 
-function getQuotaLabel(status?: SystemStatus) {
-  const displayType = status?.quota_display_type ?? 'TOKENS'
-  if (displayType === 'TOKENS') {
-    return 'Tokens'
+function formatLatency(value?: number) {
+  const duration = Number(value ?? 0)
+
+  if (!Number.isFinite(duration) || duration <= 0) {
+    return '-'
   }
-  if (displayType === 'CNY') {
-    return 'CNY'
+
+  if (duration < 1000) {
+    return `${Math.round(duration)} ms`
   }
-  if (displayType === 'CUSTOM') {
-    return status?.custom_currency_symbol?.trim() || '自定义货币'
+
+  if (duration < 60_000) {
+    return `${(duration / 1000).toFixed(duration >= 10_000 ? 1 : 2)} s`
   }
-  return 'USD'
+
+  return `${(duration / 60_000).toFixed(1)} min`
 }
 
 function getResetTarget(subscription: SubscriptionSummary | undefined, nowMs: number) {
@@ -262,12 +267,6 @@ function getTokenStatusLabel(status: number) {
   if (status === 1) return '启用中'
   if (status === 2) return '已禁用'
   return '已过期'
-}
-
-function getTokenStatusTone(status: number): 'default' | 'success' | 'warning' {
-  if (status === 1) return 'success'
-  if (status === 2) return 'default'
-  return 'warning'
 }
 
 function buildUsagePath(points: number[], width: number, height: number) {
@@ -338,7 +337,9 @@ function UsageTrendChart({
   const areaPath = buildUsageArea(values, 1000, 260)
   const peak = Math.max(...values, 0)
   const total = sumBuckets(buckets)
-  const labelIndexes = [0, Math.floor((buckets.length - 1) / 2), buckets.length - 1]
+  const labelIndexes = Array.from(
+    new Set([0, Math.floor((buckets.length - 1) / 2), buckets.length - 1])
+  ).filter((index) => index >= 0 && index < buckets.length)
 
   return (
     <div className='space-y-4'>
@@ -419,6 +420,7 @@ function UsageTrendChart({
 
 export function DashboardOverview({
   status,
+  notice,
   profile,
   userModels,
   tokens,
@@ -428,7 +430,6 @@ export function DashboardOverview({
   trendThreeDays,
   trendSevenDays,
   initialLogs,
-  initialLogStats,
   topupInfo,
   topupRecords,
   apiBaseUrl,
@@ -450,6 +451,7 @@ export function DashboardOverview({
   const todaySummary = sumBuckets(todayBuckets)
   const dashboardTokens = tokens.data?.items ?? []
   const genericChatTemplates = parseGenericChatTemplates(systemStatus?.chats)
+  const noticeText = notice.data?.trim() ?? ''
 
   const [range, setRange] = useState<RangeKey>('today')
   const [modelFilter, setModelFilter] = useState('')
@@ -459,12 +461,16 @@ export function DashboardOverview({
   const [selectedChatTemplateName, setSelectedChatTemplateName] = useState('')
   const [revealedKeys, setRevealedKeys] = useState<Record<number, string>>({})
   const [loadingTokenId, setLoadingTokenId] = useState<number | null>(null)
+  const [chatToolsOpen, setChatToolsOpen] = useState(false)
+  const [chatTargetToken, setChatTargetToken] = useState<TokenRecord | null>(null)
   const [guideOpen, setGuideOpen] = useState(false)
   const [guideTokenValue, setGuideTokenValue] = useState('')
   const [keysOpen, setKeysOpen] = useState(false)
   const [billingOpen, setBillingOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
   const [securityOpen, setSecurityOpen] = useState(false)
+  const [noticeOpen, setNoticeOpen] = useState(false)
+  const [expandedLogIds, setExpandedLogIds] = useState<Record<number, boolean>>({})
   const [nowMs, setNowMs] = useState(renderedAtMs)
 
   const deferredModelFilter = useDeferredValue(modelFilter.trim())
@@ -513,13 +519,6 @@ export function DashboardOverview({
     request_id: deferredRequestIdFilter,
   })
 
-  const statsQuery = buildQueryString({
-    start_timestamp: rangeWindow.startTimestamp,
-    end_timestamp: rangeWindow.endTimestamp,
-    model_name: deferredModelFilter,
-    token_name: deferredTokenFilter,
-  })
-
   const logsQuery = useQuery({
     queryKey: [
       'dashboard-logs',
@@ -533,18 +532,6 @@ export function DashboardOverview({
       fetchJson<PaginatedResponse<UsageLog>>(`/api/newapi/log/self?${logQuery}`),
     placeholderData: keepPreviousData,
     initialData: range === 'today' && page === 1 ? initialLogs : undefined,
-  })
-
-  const logStatsQuery = useQuery({
-    queryKey: ['dashboard-log-stats', range, deferredModelFilter, deferredTokenFilter],
-    queryFn: () =>
-      fetchJson<ApiResponse<LogStats>>(`/api/newapi/log/self/stat?${statsQuery}`),
-    initialData:
-      range === 'today' &&
-      deferredModelFilter === '' &&
-      deferredTokenFilter === ''
-        ? initialLogStats
-        : undefined,
   })
 
   async function loadFullTokenValue(tokenId: number) {
@@ -597,6 +584,11 @@ export function DashboardOverview({
     }
   }
 
+  function handleOpenToolSelector(token: TokenRecord) {
+    setChatTargetToken(token)
+    setChatToolsOpen(true)
+  }
+
   async function handleOpenChatTemplate(token: TokenRecord) {
     if (!activeChatTemplate) {
       toast.error('当前没有可用的聊天工具模板')
@@ -623,7 +615,13 @@ export function DashboardOverview({
   const logs = logsQuery.data?.data?.items ?? []
   const totalLogs = logsQuery.data?.data?.total ?? 0
   const totalPages = Math.max(1, Math.ceil(totalLogs / 10))
-  const usageStats = logStatsQuery.data?.data
+
+  function toggleLogExpanded(logId: number) {
+    setExpandedLogIds((current) => ({
+      ...current,
+      [logId]: !current[logId],
+    }))
+  }
 
   return (
     <>
@@ -648,15 +646,17 @@ export function DashboardOverview({
                 </Link>
               </div>
             </div>
-            <h1 className='mt-2 text-2xl font-semibold text-[var(--foreground)]'>
-              {user?.display_name || user?.username || '控制台'}
-            </h1>
+            <h1 className='mt-2 text-2xl font-semibold text-[var(--foreground)]'>控制台</h1>
           </div>
 
           <div className='flex flex-wrap items-center gap-3'>
-            <div className='hidden rounded-full bg-[var(--surface-strong)] px-4 py-2 text-sm text-[var(--muted-strong)] lg:block'>
-              模型 {formatNumber(userModelList.length)} 个 · 请求 {formatNumber(user?.request_count ?? 0)} 次
-            </div>
+            <Button variant='secondary' size='sm' onClick={() => setNoticeOpen(true)}>
+              <Bell className='size-4' />
+              通知
+              {noticeText ? (
+                <span className='ml-1 inline-flex size-2 rounded-full bg-[var(--accent)]' />
+              ) : null}
+            </Button>
             {user ? (
               <UserMenu
                 profile={user}
@@ -698,37 +698,26 @@ export function DashboardOverview({
                 </div>
               </div>
             </CardHeader>
-            <CardContent className='space-y-5 px-6 py-6'>
+            <CardContent className='space-y-4 px-6 py-6'>
               <UsageTrendChart buckets={currentBuckets} status={systemStatus} />
 
-              <div className='grid gap-4 border-t border-[var(--border)] pt-5 md:grid-cols-3'>
-                <div className='rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--surface)] p-4'>
-                  <p className='text-sm text-[var(--muted)]'>今日花费</p>
-                  <p className='mt-2 text-2xl font-semibold text-[var(--foreground)]'>
+              <div className='grid gap-3 border-t border-[var(--border)] pt-4 md:grid-cols-3'>
+                <div className='rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--surface)] px-4 py-3.5'>
+                  <p className='text-xs text-[var(--muted)]'>今日花费</p>
+                  <p className='mt-1.5 text-xl font-semibold text-[var(--foreground)]'>
                     {formatQuotaValue(todaySummary.quota, systemStatus)}
                   </p>
-                  <p className='mt-2 text-xs text-[var(--muted)]'>
-                    单位：{getQuotaLabel(systemStatus)}
-                  </p>
                 </div>
-                <div className='rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--surface)] p-4'>
-                  <p className='text-sm text-[var(--muted)]'>剩余额度</p>
-                  <p className='mt-2 text-2xl font-semibold text-[var(--foreground)]'>
+                <div className='rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--surface)] px-4 py-3.5'>
+                  <p className='text-xs text-[var(--muted)]'>剩余额度</p>
+                  <p className='mt-1.5 text-xl font-semibold text-[var(--foreground)]'>
                     {formatQuotaValue(Number(user?.quota ?? 0), systemStatus)}
                   </p>
-                  <p className='mt-2 text-xs text-[var(--muted)]'>
-                    今日调用 {formatNumber(todaySummary.count)} 次
-                  </p>
                 </div>
-                <div className='rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--surface)] p-4'>
-                  <p className='text-sm text-[var(--muted)]'>距离重置</p>
-                  <p className='mt-2 text-2xl font-semibold text-[var(--foreground)]'>
+                <div className='rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--surface)] px-4 py-3.5'>
+                  <p className='text-xs text-[var(--muted)]'>距离重置</p>
+                  <p className='mt-1.5 text-xl font-semibold text-[var(--foreground)]'>
                     {formatCountdown(resetTarget, nowMs)}
-                  </p>
-                  <p className='mt-2 text-xs text-[var(--muted)]'>
-                    {activeSubscription?.subscription?.next_reset_time
-                      ? formatDateTime(activeSubscription.subscription.next_reset_time)
-                      : '每日 00:00'}
                   </p>
                 </div>
               </div>
@@ -740,12 +729,14 @@ export function DashboardOverview({
               <CardHeader className='border-b border-[rgba(255,255,255,0.08)]'>
                 <div className='flex items-start justify-between gap-4'>
                   <div>
-                    <CardTitle className='flex items-center gap-2'>
+                    <CardTitle className='flex items-center gap-2 text-white'>
                       <Wallet className='size-5 text-[#bbf7d0]' />
-                      余额与套餐
+                      余额与订阅
                     </CardTitle>
                   </div>
-                  {activeSubscription ? <Badge tone='success'>套餐生效中</Badge> : <Badge>无套餐</Badge>}
+                  <Button size='sm' variant='secondary' onClick={() => setBillingOpen(true)}>
+                    充值
+                  </Button>
                 </div>
               </CardHeader>
               <CardContent className='space-y-4 px-6 py-6'>
@@ -757,7 +748,7 @@ export function DashboardOverview({
                     </p>
                   </div>
                   <div className='rounded-[var(--radius-lg)] border border-[rgba(255,255,255,0.10)] bg-[rgba(255,255,255,0.08)] p-4 backdrop-blur'>
-                    <p className='text-sm text-[rgba(236,253,245,0.72)]'>套餐剩余额度</p>
+                    <p className='text-sm text-[rgba(236,253,245,0.72)]'>订阅剩余额度</p>
                     <p className='mt-2 text-2xl font-semibold text-white'>
                       {activeSubscription
                         ? formatQuotaValue(remainingPackageQuota, systemStatus)
@@ -771,13 +762,13 @@ export function DashboardOverview({
                     <div className='flex items-start justify-between gap-4'>
                       <div>
                         <p className='text-lg font-semibold text-white'>
-                          {activePlan?.title || `套餐 #${activeSubscription.subscription.plan_id}`}
+                          {activePlan?.title || `订阅 #${activeSubscription.subscription.plan_id}`}
                         </p>
-                        {activePlan?.subtitle ? (
-                          <p className='mt-1 text-sm text-[rgba(236,253,245,0.72)]'>{activePlan.subtitle}</p>
-                        ) : null}
                       </div>
-                      <Badge tone='warning'>
+                      <Badge
+                        tone='warning'
+                        className='border-[rgba(255,255,255,0.28)] bg-[rgba(255,255,255,0.14)] text-[#f8fafc]'
+                      >
                         {subscription.data?.billing_preference || 'subscription_first'}
                       </Badge>
                     </div>
@@ -811,21 +802,10 @@ export function DashboardOverview({
                     </div>
                   </div>
                 ) : (
-                  <EmptyState
-                    title='当前没有启用中的套餐'
-                    description='可直接使用账户余额。'
-                  />
+                  <div className='rounded-[var(--radius-lg)] border border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.08)] p-4 backdrop-blur'>
+                    <p className='text-base font-semibold text-[#f8fafc]'>当前没有启用中的订阅</p>
+                  </div>
                 )}
-
-                <div className='flex items-center justify-between rounded-[var(--radius-lg)] border border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.08)] p-4 text-sm text-[rgba(236,253,245,0.78)]'>
-                  <span>
-                    可用模型 {formatNumber(userModelList.length)} 个，历史请求{' '}
-                    {formatNumber(user?.request_count ?? 0)} 次
-                  </span>
-                  <Button size='sm' variant='secondary' onClick={() => setBillingOpen(true)}>
-                    查看账单
-                  </Button>
-                </div>
               </CardContent>
             </Card>
 
@@ -838,9 +818,9 @@ export function DashboardOverview({
                       令牌管理
                     </CardTitle>
                   </div>
-                  <Badge tone={selectedToken ? getTokenStatusTone(selectedToken.status) : 'default'}>
-                    {selectedToken ? getTokenStatusLabel(selectedToken.status) : '暂无令牌'}
-                  </Badge>
+                  <Button size='sm' variant='secondary' onClick={() => setKeysOpen(true)}>
+                    更多
+                  </Button>
                 </div>
               </CardHeader>
               <CardContent className='space-y-4'>
@@ -849,11 +829,25 @@ export function DashboardOverview({
                     <div className='rounded-[var(--radius-lg)] bg-[var(--surface-strong)] p-4'>
                       <div className='flex items-start justify-between gap-4'>
                         <div>
-                          <p className='text-lg font-semibold text-[var(--foreground)]'>
-                            {selectedToken.name}
-                          </p>
+                          <div className='flex items-center gap-2'>
+                            <span
+                              className={cn(
+                                'inline-flex size-2.5 rounded-full',
+                                selectedToken.status === 1
+                                  ? 'bg-[var(--success)] shadow-[0_0_0_4px_rgba(30,125,86,0.12)]'
+                                  : selectedToken.status === 2
+                                    ? 'bg-[var(--muted)] shadow-[0_0_0_4px_rgba(113,113,122,0.12)]'
+                                    : 'bg-[var(--accent-strong)] shadow-[0_0_0_4px_rgba(202,90,26,0.12)]'
+                              )}
+                              aria-label={getTokenStatusLabel(selectedToken.status)}
+                              title={getTokenStatusLabel(selectedToken.status)}
+                            />
+                            <p className='text-lg font-semibold text-[var(--foreground)]'>
+                              {selectedToken.name}
+                            </p>
+                          </div>
                           <p className='mt-2 font-mono text-xs text-[var(--muted-strong)]'>
-                            {revealedKeys[selectedToken.id] || selectedToken.key}
+                            {selectedToken.key}
                           </p>
                         </div>
                         <div className='flex items-center gap-2'>
@@ -872,7 +866,7 @@ export function DashboardOverview({
                           </Button>
                           <Button
                             size='sm'
-                            onClick={() => void handleOpenGuide(selectedToken)}
+                            onClick={() => handleOpenToolSelector(selectedToken)}
                             disabled={loadingTokenId === selectedToken.id}
                           >
                             <ExternalLink className='mr-2 size-4' />
@@ -881,91 +875,12 @@ export function DashboardOverview({
                         </div>
                       </div>
                     </div>
-
-                    {genericChatTemplates.length ? (
-                      <div className='rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--surface)] p-4'>
-                        <div className='flex flex-col gap-3 md:flex-row md:items-center'>
-                          <div className='min-w-0 flex-1'>
-                            <p className='text-sm font-medium text-[var(--foreground)]'>
-                              聊天工具
-                            </p>
-                            <p className='mt-1 text-xs text-[var(--muted)]'>
-                              使用管理员配置的通用模板打开外部聊天工具。
-                            </p>
-                          </div>
-                          <div className='grid gap-3 md:grid-cols-[minmax(220px,1fr)_auto] md:items-center'>
-                            <Select
-                              value={activeChatTemplateName}
-                              onChange={(event) => setSelectedChatTemplateName(event.target.value)}
-                              aria-label='选择聊天工具'
-                            >
-                              {genericChatTemplates.map((template) => (
-                                <option key={template.name} value={template.name}>
-                                  {template.name}
-                                </option>
-                              ))}
-                            </Select>
-                            <Button
-                              size='sm'
-                              onClick={() => void handleOpenChatTemplate(selectedToken)}
-                              disabled={loadingTokenId === selectedToken.id}
-                            >
-                              <ExternalLink className='mr-2 size-4' />
-                              打开
-                            </Button>
-                          </div>
-                        </div>
-                      </div>
-                    ) : systemStatus?.chats?.length ? (
-                      <div className='rounded-[var(--radius-lg)] border border-dashed border-[var(--border)] bg-[var(--surface)] p-4 text-sm text-[var(--muted)]'>
-                        当前已配置聊天工具，但模板需要专用适配。MoreToken 暂仅支持
-                        <code className='mx-1 rounded bg-[var(--surface-strong)] px-1.5 py-0.5 text-xs text-[var(--foreground)]'>
-                          {'{address}'}
-                        </code>
-                        和
-                        <code className='mx-1 rounded bg-[var(--surface-strong)] px-1.5 py-0.5 text-xs text-[var(--foreground)]'>
-                          {'{key}'}
-                        </code>
-                        这类通用模板。
-                      </div>
-                    ) : null}
-
-                    <div className='grid gap-4 sm:grid-cols-3'>
-                      <div className='rounded-[var(--radius-lg)] border border-[var(--border)] p-4'>
-                        <p className='text-sm text-[var(--muted)]'>令牌额度</p>
-                        <p className='mt-2 text-lg font-semibold text-[var(--foreground)]'>
-                          {selectedToken.unlimited_quota
-                            ? '无限'
-                            : formatQuotaValue(selectedToken.remain_quota, systemStatus)}
-                        </p>
-                      </div>
-                      <div className='rounded-[var(--radius-lg)] border border-[var(--border)] p-4'>
-                        <p className='text-sm text-[var(--muted)]'>所属分组</p>
-                        <p className='mt-2 text-lg font-semibold text-[var(--foreground)]'>
-                          {selectedToken.group || 'default'}
-                        </p>
-                      </div>
-                      <div className='rounded-[var(--radius-lg)] border border-[var(--border)] p-4'>
-                        <p className='text-sm text-[var(--muted)]'>最近访问</p>
-                        <p className='mt-2 text-lg font-semibold text-[var(--foreground)]'>
-                          {formatDateTime(selectedToken.accessed_time)}
-                        </p>
-                      </div>
-                    </div>
                   </>
                 ) : (
                   <EmptyState
                     title='还没有可用令牌'
-                    description='创建第一个 API Key 后会显示在这里。'
                   />
                 )}
-
-                <div className='flex flex-wrap gap-3'>
-                  <Button variant='secondary' onClick={() => setKeysOpen(true)}>
-                    <ShieldCheck className='mr-2 size-4' />
-                    管理全部令牌
-                  </Button>
-                </div>
               </CardContent>
             </Card>
           </div>
@@ -979,26 +894,6 @@ export function DashboardOverview({
                   <Activity className='size-5 text-[var(--accent)]' />
                   用量明细
                 </CardTitle>
-              </div>
-              <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-3'>
-                <div className='rounded-[var(--radius-lg)] bg-[var(--surface-strong)] px-4 py-3'>
-                  <p className='text-xs uppercase tracking-[0.18em] text-[var(--muted)]'>区间消耗</p>
-                  <p className='mt-2 text-lg font-semibold text-[var(--foreground)]'>
-                    {formatQuotaValue(Number(usageStats?.quota ?? 0), systemStatus)}
-                  </p>
-                </div>
-                <div className='rounded-[var(--radius-lg)] bg-[var(--surface-strong)] px-4 py-3'>
-                  <p className='text-xs uppercase tracking-[0.18em] text-[var(--muted)]'>RPM</p>
-                  <p className='mt-2 text-lg font-semibold text-[var(--foreground)]'>
-                    {formatNumber(usageStats?.rpm ?? 0)}
-                  </p>
-                </div>
-                <div className='rounded-[var(--radius-lg)] bg-[var(--surface-strong)] px-4 py-3'>
-                  <p className='text-xs uppercase tracking-[0.18em] text-[var(--muted)]'>TPM</p>
-                  <p className='mt-2 text-lg font-semibold text-[var(--foreground)]'>
-                    {formatNumber(usageStats?.tpm ?? 0)}
-                  </p>
-                </div>
               </div>
             </div>
 
@@ -1075,27 +970,97 @@ export function DashboardOverview({
                       <tr>
                         <Th>时间</Th>
                         <Th>模型</Th>
+                        <Th>性能</Th>
+                        <Th>Tokens</Th>
+                        <Th>费用</Th>
                         <Th>令牌</Th>
-                        <Th>Request ID</Th>
-                        <Th>花费</Th>
-                        <Th>输入 Tokens</Th>
-                        <Th>输出 Tokens</Th>
                       </tr>
                     </TableHead>
                     <TableBody>
-                      {logs.map((log) => (
-                        <tr key={`${log.id}-${log.request_id ?? log.created_at ?? 'row'}`}>
-                          <Td>{formatDateTime(log.created_at, 'seconds')}</Td>
-                          <Td>{log.model_name || '-'}</Td>
-                          <Td>{log.token_name || '-'}</Td>
-                          <Td className='max-w-48 font-mono text-xs text-[var(--muted-strong)]'>
-                            {log.request_id || '-'}
-                          </Td>
-                          <Td>{formatQuotaValue(log.quota, systemStatus)}</Td>
-                          <Td>{formatNumber(log.prompt_tokens ?? 0)}</Td>
-                          <Td>{formatNumber(log.completion_tokens ?? 0)}</Td>
-                        </tr>
-                      ))}
+                      {logs.map((log) => {
+                        const isExpanded = Boolean(expandedLogIds[log.id])
+                        const totalTokens =
+                          Number(log.prompt_tokens ?? 0) + Number(log.completion_tokens ?? 0)
+
+                        return (
+                          <Fragment key={`${log.id}-${log.request_id ?? log.created_at ?? 'row'}`}>
+                            <tr
+                              className='cursor-pointer transition-colors hover:bg-[var(--surface-strong)]'
+                              onClick={() => toggleLogExpanded(log.id)}
+                            >
+                              <Td>
+                                <button
+                                  type='button'
+                                  className='flex items-center gap-2 text-left'
+                                  onClick={(event) => {
+                                    event.stopPropagation()
+                                    toggleLogExpanded(log.id)
+                                  }}
+                                  aria-expanded={isExpanded}
+                                >
+                                  <ChevronDown
+                                    className={cn(
+                                      'size-4 text-[var(--muted)] transition-transform',
+                                      isExpanded && 'rotate-180'
+                                    )}
+                                  />
+                                  <span>{formatDateTime(log.created_at, 'seconds')}</span>
+                                </button>
+                              </Td>
+                              <Td>
+                                <div className='font-medium text-[var(--foreground)]'>
+                                  {log.model_name || '-'}
+                                </div>
+                              </Td>
+                              <Td>{formatLatency(log.use_time)}</Td>
+                              <Td>
+                                <div>{formatNumber(totalTokens)}</div>
+                                <div className='mt-1 text-xs text-[var(--muted)]'>
+                                  in {formatNumber(log.prompt_tokens ?? 0)} / out{' '}
+                                  {formatNumber(log.completion_tokens ?? 0)}
+                                </div>
+                              </Td>
+                              <Td>{formatQuotaValue(log.quota, systemStatus)}</Td>
+                              <Td>{log.token_name || '-'}</Td>
+                            </tr>
+                            {isExpanded ? (
+                              <tr>
+                                <Td colSpan={6} className='bg-[var(--surface-strong)] px-5 py-4'>
+                                  <div className='space-y-4'>
+                                    <div className='flex flex-wrap items-center gap-2'>
+                                      <Badge>类型 {formatNumber(log.type)}</Badge>
+                                      <Badge>耗时 {formatLatency(log.use_time)}</Badge>
+                                      <Badge>输入 {formatNumber(log.prompt_tokens ?? 0)}</Badge>
+                                      <Badge>输出 {formatNumber(log.completion_tokens ?? 0)}</Badge>
+                                      <Badge>总计 {formatNumber(totalTokens)}</Badge>
+                                    </div>
+
+                                    <div className='rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)]'>
+                                      <div className='border-b border-[var(--border)] px-4 py-3'>
+                                        <p className='text-xs uppercase tracking-[0.14em] text-[var(--muted)]'>
+                                          Request ID
+                                        </p>
+                                        <p className='mt-1 break-all font-mono text-xs text-[var(--foreground)]'>
+                                          {log.request_id || '-'}
+                                        </p>
+                                      </div>
+
+                                      <div className='px-4 py-3'>
+                                        <p className='text-xs uppercase tracking-[0.14em] text-[var(--muted)]'>
+                                          内容
+                                        </p>
+                                        <pre className='mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-words text-xs leading-6 text-[var(--muted-strong)]'>
+                                          {log.content?.trim() || '无额外内容'}
+                                        </pre>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </Td>
+                              </tr>
+                            ) : null}
+                          </Fragment>
+                        )
+                      })}
                     </TableBody>
                   </Table>
                 </TableWrapper>
@@ -1127,12 +1092,107 @@ export function DashboardOverview({
             ) : (
               <EmptyState
                 title='当前筛选条件下没有日志'
-                description='没有匹配记录。'
               />
             )}
           </CardContent>
         </Card>
       </div>
+
+      <Dialog
+        open={noticeOpen}
+        onClose={() => setNoticeOpen(false)}
+        title='通知与公告'
+        className='max-w-3xl'
+      >
+        <div className='space-y-4 p-6'>
+          {noticeText ? (
+            <div className='rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--surface)] p-5'>
+              <div className='flex items-center gap-2'>
+                <Bell className='size-4 text-[var(--accent)]' />
+                <p className='text-sm font-semibold text-[var(--foreground)]'>最新公告</p>
+              </div>
+              <div className='mt-4 whitespace-pre-wrap break-words text-sm leading-7 text-[var(--muted-strong)]'>
+                {noticeText}
+              </div>
+            </div>
+          ) : (
+            <EmptyState title='暂无通知' />
+          )}
+        </div>
+      </Dialog>
+
+      <Dialog
+        open={chatToolsOpen}
+        onClose={() => setChatToolsOpen(false)}
+        title='选择聊天工具'
+      >
+        <div className='space-y-4 p-6'>
+          {genericChatTemplates.length ? (
+            <div className='grid gap-3 md:grid-cols-[minmax(220px,1fr)_auto] md:items-center'>
+              <Select
+                value={activeChatTemplateName}
+                onChange={(event) => setSelectedChatTemplateName(event.target.value)}
+                aria-label='选择聊天工具'
+              >
+                {genericChatTemplates.map((template) => (
+                  <option key={template.name} value={template.name}>
+                    {template.name}
+                  </option>
+                ))}
+              </Select>
+              <Button
+                size='sm'
+                onClick={() => {
+                  if (!chatTargetToken) {
+                    return
+                  }
+                  void handleOpenChatTemplate(chatTargetToken)
+                }}
+                disabled={!chatTargetToken || loadingTokenId === chatTargetToken.id}
+              >
+                <ExternalLink className='mr-2 size-4' />
+                打开聊天工具
+              </Button>
+            </div>
+          ) : systemStatus?.chats?.length ? (
+            <div className='rounded-[var(--radius-lg)] border border-dashed border-[var(--border)] bg-[var(--surface)] p-4 text-sm text-[var(--muted)]'>
+              当前模板暂不支持
+              <code className='mx-1 rounded bg-[var(--surface-strong)] px-1.5 py-0.5 text-xs text-[var(--foreground)]'>
+                {'{address}'}
+              </code>
+              和
+              <code className='mx-1 rounded bg-[var(--surface-strong)] px-1.5 py-0.5 text-xs text-[var(--foreground)]'>
+                {'{key}'}
+              </code>
+              这类通用模板。
+            </div>
+          ) : (
+            <div className='rounded-[var(--radius-lg)] border border-dashed border-[var(--border)] bg-[var(--surface)] p-4 text-sm text-[var(--muted)]'>
+              暂无可用聊天工具模板
+            </div>
+          )}
+
+          <div className='flex flex-wrap justify-end gap-3'>
+            <Button
+              size='sm'
+              variant='secondary'
+              onClick={() => {
+                if (!chatTargetToken) {
+                  return
+                }
+                setChatToolsOpen(false)
+                void handleOpenGuide(chatTargetToken)
+              }}
+              disabled={!chatTargetToken || loadingTokenId === chatTargetToken.id}
+            >
+              查看 API 教程
+            </Button>
+            <Button size='sm' variant='secondary' onClick={() => setChatToolsOpen(false)}>
+              关闭
+            </Button>
+          </div>
+        </div>
+      </Dialog>
 
       <Dialog
         open={guideOpen}
@@ -1242,7 +1302,7 @@ console.log(data)`}
       <Dialog
         open={keysOpen}
         onClose={() => setKeysOpen(false)}
-        title='Keys 管理'
+        title='令牌管理'
         className='max-w-6xl'
       >
         <div className='p-6'>
@@ -1253,7 +1313,7 @@ console.log(data)`}
       <Dialog
         open={billingOpen}
         onClose={() => setBillingOpen(false)}
-        title='账单与套餐'
+        title='账单与订阅'
         className='max-w-6xl'
       >
         <div className='p-6'>

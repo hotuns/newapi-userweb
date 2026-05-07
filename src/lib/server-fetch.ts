@@ -39,6 +39,15 @@ export const getPricing = cache(async () => {
   return parseJson<PricingResponse>(response)
 })
 
+export const getNotice = cache(async () => {
+  const url = buildNewApiUrl('/api/notice')
+  const response = await fetch(url, {
+    headers: await createNewApiHeaders(),
+    next: { revalidate: 60 },
+  })
+  return parseJson<ApiResponse<string>>(response)
+})
+
 export async function getSelf() {
   const url = buildNewApiUrl('/api/user/self')
   const response = await fetch(url, {

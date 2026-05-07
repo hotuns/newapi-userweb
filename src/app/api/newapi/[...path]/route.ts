@@ -2,6 +2,18 @@ import { NextResponse } from 'next/server'
 import { createNewApiHeaders, isAllowedProxyPath } from '@/lib/newapi'
 import { getNewApiBaseUrl } from '@/lib/env'
 
+function createProxyResponseHeaders(source: Headers) {
+  const headers = new Headers(source)
+
+  // Undici/Next may already decode upstream compressed bodies. If we forward the
+  // original encoding metadata unchanged, browsers can try to decode again.
+  headers.delete('content-encoding')
+  headers.delete('content-length')
+  headers.delete('transfer-encoding')
+
+  return headers
+}
+
 async function handleProxy(
   request: Request,
   { params }: { params: Promise<{ path: string[] }> }
@@ -37,7 +49,7 @@ async function handleProxy(
 
   const nextResponse = new NextResponse(response.body, {
     status: response.status,
-    headers: response.headers,
+    headers: createProxyResponseHeaders(response.headers),
   })
 
   return nextResponse

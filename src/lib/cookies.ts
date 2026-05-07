@@ -1,6 +1,7 @@
 import { cookies } from 'next/headers'
 
 export const USER_ID_COOKIE = 'newapi_uid'
+export const SESSION_COOKIE = 'session'
 const DEFAULT_COOKIE_MAX_AGE = 60 * 60 * 24 * 30
 
 export async function getUserIdCookie() {
@@ -28,4 +29,20 @@ export async function clearUserIdCookie() {
     path: '/',
     maxAge: 0,
   })
+}
+
+export async function clearSessionCookie() {
+  const store = await cookies()
+  store.set(SESSION_COOKIE, '', {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: false,
+    path: '/',
+    maxAge: 0,
+  })
+}
+
+export async function clearAuthCookies() {
+  await clearUserIdCookie()
+  await clearSessionCookie()
 }

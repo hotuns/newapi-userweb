@@ -3,6 +3,7 @@ import { requireAuth } from '@/lib/auth'
 import { getNewApiBaseUrl } from '@/lib/env'
 import { buildQueryString } from '@/lib/utils'
 import {
+  getNotice,
   getStatus,
   getSubscriptionPlans,
   getSubscriptionSelf,
@@ -11,7 +12,6 @@ import {
   getTopupRecords,
   getUserLogs,
   getUserModels,
-  getUserLogStats,
   getUserQuotaData,
   getTokens,
 } from '@/lib/server-fetch'
@@ -41,9 +41,10 @@ export default async function DashboardPage() {
     end_timestamp: endTimestamp,
   })
 
-  const [status, profile, userModels, tokens, subscription, subscriptionPlans, topupInfo, topupRecords] =
+  const [status, notice, profile, userModels, tokens, subscription, subscriptionPlans, topupInfo, topupRecords] =
     await Promise.all([
       getStatus(),
+      getNotice(),
       getSelf(),
       getUserModels(),
       getTokens(buildQueryString({ p: 1, page_size: 50 })),
@@ -53,7 +54,7 @@ export default async function DashboardPage() {
       getTopupRecords(buildQueryString({ p: 1, page_size: 20 })),
     ])
 
-  const [trendToday, trendThreeDays, trendSevenDays, initialLogStats, initialLogs] =
+  const [trendToday, trendThreeDays, trendSevenDays, initialLogs] =
     await Promise.all([
       getUserQuotaData(
         buildQueryString({
@@ -73,12 +74,6 @@ export default async function DashboardPage() {
           end_timestamp: endTimestamp,
         })
       ),
-      getUserLogStats(
-        buildQueryString({
-          start_timestamp: todayStartTimestamp,
-          end_timestamp: endTimestamp,
-        })
-      ),
       getUserLogs(initialLogQuery),
     ])
 
@@ -89,11 +84,12 @@ export default async function DashboardPage() {
     <DashboardLayout
       pathname='/dashboard'
       title='控制台工作台'
-      description='在一个页面内查看用量趋势、余额与套餐、默认令牌和消费明细。'
+      description='在一个页面内查看用量趋势、余额与订阅、默认令牌和消费明细。'
       showPageIntro={false}
     >
       <DashboardOverview
         status={status}
+        notice={notice}
         profile={profile}
         userModels={userModels}
         tokens={tokens}
@@ -103,7 +99,6 @@ export default async function DashboardPage() {
         trendThreeDays={trendThreeDays}
         trendSevenDays={trendSevenDays}
         initialLogs={initialLogs}
-        initialLogStats={initialLogStats}
         topupInfo={topupInfo}
         topupRecords={topupRecords}
         apiBaseUrl={apiBaseUrl}
