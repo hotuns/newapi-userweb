@@ -1,9 +1,6 @@
 services:
   moretoken:
     image: ${MORETOKEN_IMAGE:-moretoken:latest}
-    build:
-      context: .
-      dockerfile: Dockerfile
     container_name: moretoken
     restart: always
     ports:

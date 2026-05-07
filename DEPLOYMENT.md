@@ -9,7 +9,7 @@ This document describes the production deployment model for `MoreToken` without 
 
 `MoreToken` runs in its own container stack and joins the Docker network that the official `new-api` compose file already creates.
 The app uses Next.js `standalone` output, so the runtime image only contains the compiled server bundle, static assets, and public files.
-You can either build on the server or build locally and stream the image to the server over SSH.
+The primary deployment flow is: build locally, stream the image to the server over SSH, then run that preloaded image on the server.
 
 ## 1. Start `new-api` with the official compose
 
@@ -46,11 +46,14 @@ If your environment uses a different project name, copy the actual network name 
 
 ## 3. Deploy `MoreToken`
 
-Copy the `user-web` directory to your deployment location, for example:
+Copy the deployment files to your server, for example:
 
 ```bash
 mkdir -p /opt/moretoken-web
-rsync -av /path/to/repo/user-web/ /opt/moretoken-web/
+rsync -av \
+  --exclude node_modules \
+  --exclude .next \
+  /path/to/repo/user-web/ /opt/moretoken-web/
 cd /opt/moretoken-web
 ```
 
@@ -63,17 +66,16 @@ NEWAPI_DOCKER_NETWORK=new-api_new-api-network
 EOF
 ```
 
-Then build and start:
+Then start the service with the image that has already been pushed to the server:
 
 ```bash
-docker compose up -d --build
+docker compose up -d --no-build
 ```
 
-The Docker image runs the standalone Next.js server directly via `node server.js`.
+The Docker image runs the standalone Next.js server directly via `node server.js`. The server does not rebuild from source in this flow.
 
-### Optional: build locally and push the image over SSH
-
-If you do not want to build on the server, use the included script:
+### Push the image over SSH
+Use the included script:
 
 ```bash
 cp .env.deploy.example .env.deploy
@@ -85,6 +87,7 @@ The script will:
 1. build the local Docker image
 2. stream `docker save | gzip` to the remote host over SSH
 3. run `sudo docker load` on the remote host
+4. optionally restart the remote `moretoken` service with `--no-build`
 
 The script loads `.env.deploy` automatically from the project root. You do not need to `source` it manually unless you want to override values in the current shell.
 If SSH key login is not configured, the script will prompt for the remote server password during the SSH step.
@@ -113,7 +116,7 @@ You normally only need to override:
 - `NEWAPI_DOCKER_NETWORK`
   Use the actual external network name created by the official `new-api` compose.
 - `MORETOKEN_IMAGE`
-  Use this when the server should run a preloaded image instead of rebuilding locally.
+  Use this to point the server to the preloaded image tag that was pushed from your local machine.
 
 Do not set `NEWAPI_BASE_URL` to the public `https://api.example.com` unless you intentionally want container traffic to go back through the public reverse proxy.
 
@@ -148,15 +151,7 @@ git pull
 docker compose up -d
 ```
 
-Update `MoreToken` independently:
-
-```bash
-cd /opt/moretoken-web
-git pull
-docker compose up -d --build
-```
-
-Or update by pushing a prebuilt image from your local machine:
+Update `MoreToken` independently by pushing a prebuilt image from your local machine:
 
 ```bash
 cd /path/to/user-web
