@@ -9,6 +9,7 @@ This document describes the production deployment model for `MoreToken` without 
 
 `MoreToken` runs in its own container stack and joins the Docker network that the official `new-api` compose file already creates.
 The app uses Next.js `standalone` output, so the runtime image only contains the compiled server bundle, static assets, and public files.
+You can either build on the server or build locally and stream the image to the server over SSH.
 
 ## 1. Start `new-api` with the official compose
 
@@ -70,6 +71,32 @@ docker compose up -d --build
 
 The Docker image runs the standalone Next.js server directly via `node server.js`.
 
+### Optional: build locally and push the image over SSH
+
+If you do not want to build on the server, use the included script:
+
+```bash
+cp .env.deploy.example .env.deploy
+bash ./scripts/push-image.sh
+```
+
+The script will:
+
+1. build the local Docker image
+2. stream `docker save | gzip` to the remote host over SSH
+3. run `sudo docker load` on the remote host
+
+The script loads `.env.deploy` automatically from the project root. You do not need to `source` it manually unless you want to override values in the current shell.
+If SSH key login is not configured, the script will prompt for the remote server password during the SSH step.
+
+If you also set `DEPLOY_AFTER_LOAD=true`, the script will run:
+
+```bash
+MORETOKEN_IMAGE=<your-image> sudo docker compose up -d --no-build moretoken
+```
+
+inside `REMOTE_APP_DIR` on the server.
+
 ## 4. Runtime variables
 
 `docker-compose.yml` already sets the required app runtime values:
@@ -77,6 +104,7 @@ The Docker image runs the standalone Next.js server directly via `node server.js
 - `NEWAPI_BASE_URL=http://new-api:3000`
 - `NODE_ENV=production`
 - `PORT=3001`
+- `MORETOKEN_IMAGE=moretoken:latest`
 
 You normally only need to override:
 
@@ -84,6 +112,8 @@ You normally only need to override:
   Use a Docker-internal address. Default is `http://new-api:3000`.
 - `NEWAPI_DOCKER_NETWORK`
   Use the actual external network name created by the official `new-api` compose.
+- `MORETOKEN_IMAGE`
+  Use this when the server should run a preloaded image instead of rebuilding locally.
 
 Do not set `NEWAPI_BASE_URL` to the public `https://api.example.com` unless you intentionally want container traffic to go back through the public reverse proxy.
 
@@ -124,6 +154,13 @@ Update `MoreToken` independently:
 cd /opt/moretoken-web
 git pull
 docker compose up -d --build
+```
+
+Or update by pushing a prebuilt image from your local machine:
+
+```bash
+cd /path/to/user-web
+DEPLOY_AFTER_LOAD=true bash ./scripts/push-image.sh
 ```
 
 The two stacks stay decoupled, so you do not need to maintain a fork of the official `new-api` compose file.

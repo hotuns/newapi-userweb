@@ -2,11 +2,13 @@
   "name": "user-web",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@10.33.4",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "push:image": "bash ./scripts/push-image.sh"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

@@ -3,7 +3,7 @@ FROM node:20-alpine AS builder
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
 
-RUN corepack enable
+RUN corepack enable && corepack prepare pnpm@10.33.4 --activate
 
 WORKDIR /app
 
@@ -15,10 +15,13 @@ RUN pnpm build
 
 FROM node:20-alpine AS runner
 
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
 ENV NODE_ENV=production
 ENV PORT=3001
 
-RUN addgroup -S nodejs \
+RUN corepack enable && corepack prepare pnpm@10.33.4 --activate \
+  && addgroup -S nodejs \
   && adduser -S nextjs -G nodejs
 
 WORKDIR /app
