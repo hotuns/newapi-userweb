@@ -1,0 +1,29 @@
+services:
+  moretoken:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: moretoken
+    restart: always
+    ports:
+      - "3001:3001"
+    environment:
+      NEWAPI_BASE_URL: ${NEWAPI_BASE_URL:-http://new-api:3000}
+      NODE_ENV: production
+      PORT: 3001
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -q -O - http://localhost:3001/ >/dev/null 2>&1 || exit 1",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - new-api-external
+
+networks:
+  new-api-external:
+    external: true
+    name: ${NEWAPI_DOCKER_NETWORK:-new-api_new-api-network}
