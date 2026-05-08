@@ -2,6 +2,8 @@ import { DashboardLayout } from '@/components/shell/dashboard-layout'
 import { requireAuth } from '@/lib/auth'
 import { buildQueryString } from '@/lib/utils'
 import {
+  getStatus,
+  getSelf,
   getSubscriptionPlans,
   getSubscriptionSelf,
   getTopupInfo,
@@ -11,7 +13,9 @@ import { BillingPage } from '@/features/billing/components/billing-page'
 
 export default async function UserBillingPage() {
   await requireAuth()
-  const [topupInfo, topupRecords, subscription, subscriptionPlans] = await Promise.all([
+  const [status, profile, topupInfo, topupRecords, subscription, subscriptionPlans] = await Promise.all([
+    getStatus(),
+    getSelf(),
     getTopupInfo(),
     getTopupRecords(buildQueryString({ p: 1, page_size: 20 })),
     getSubscriptionSelf(),
@@ -25,6 +29,8 @@ export default async function UserBillingPage() {
       description='只读展示充值配置、充值记录和订阅概览，不在当前版本发起支付动作。'
     >
       <BillingPage
+        profile={profile}
+        status={status}
         topupInfo={topupInfo}
         topupRecords={topupRecords}
         subscription={subscription}

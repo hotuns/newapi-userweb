@@ -10,6 +10,7 @@ export type ApiResponse<T = unknown> = {
 export type ChatTemplateConfig = Record<string, string>
 
 export type Announcement = {
+  id?: number | string
   content: string
   publishDate?: string
   type?: 'default' | 'ongoing' | 'success' | 'warning' | 'error'

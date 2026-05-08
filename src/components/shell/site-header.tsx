@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -22,14 +23,20 @@ export function SiteHeader({ authenticated = false }: SiteHeaderProps) {
     <header className='sticky top-0 z-40 border-b border-[var(--border)] bg-[rgba(250,252,252,0.88)] backdrop-blur'>
       <div className='mx-auto flex w-full max-w-7xl items-center justify-between px-6 py-4 lg:px-8'>
         <Link href='/' className='flex items-center gap-3'>
-          <div className='flex size-10 items-center justify-center rounded-2xl bg-[var(--accent)] text-sm font-bold text-[var(--accent-foreground)]'>
-            MT
+          <div className='flex size-10 items-center justify-center overflow-hidden rounded-2xl bg-[var(--surface)] shadow-[var(--shadow-card)] ring-1 ring-[var(--border)]'>
+            <Image
+              src='/brand/moretoken-icon.png'
+              alt='MoreToken'
+              width={40}
+              height={40}
+              className='size-full object-cover'
+              priority
+            />
           </div>
           <div>
             <p className='text-sm font-semibold tracking-[0.22em] text-[var(--muted)] uppercase'>
               MoreToken
             </p>
-            <p className='text-sm text-[var(--foreground)]'>大模型 API</p>
           </div>
         </Link>
 

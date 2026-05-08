@@ -1,7 +1,8 @@
 'use client'
 
+import Image from 'next/image'
 import Link from 'next/link'
-import { Fragment } from 'react'
+import { Fragment, useSyncExternalStore, type ComponentType } from 'react'
 import { useEffect, useDeferredValue, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import ReactMarkdown from 'react-markdown'
@@ -9,12 +10,14 @@ import remarkGfm from 'remark-gfm'
 import {
   Activity,
   Bell,
+  CheckCheck,
   ChevronDown,
   Copy,
   ExternalLink,
+  House,
   KeyRound,
+  Megaphone,
   RefreshCw,
-  Sparkles,
   Wallet,
 } from 'lucide-react'
 import { BillingPage } from '@/features/billing/components/billing-page'
@@ -78,10 +81,17 @@ type ChartBucket = {
 
 type NoticeItem = {
   id: string
+  key: string
+  kind: 'notice' | 'announcement'
   content: string
   publishDate?: string
   extra?: string
   type?: Announcement['type']
+}
+
+type NotificationReadState = {
+  noticeKey?: string
+  announcementKeys: string[]
 }
 
 const RANGE_OPTIONS: Array<{ key: RangeKey; label: string; days: number }> = [
@@ -90,34 +100,149 @@ const RANGE_OPTIONS: Array<{ key: RangeKey; label: string; days: number }> = [
   { key: '7d', label: '七天', days: 7 },
 ]
 
-function buildNoticeItems(
-  announcements: Announcement[] | undefined,
-  fallbackNotice: string
-): NoticeItem[] {
-  const items = (announcements ?? [])
-    .map((item, index) => ({
-      id: `${item.publishDate ?? 'announcement'}-${index}`,
+const NOTIFICATION_READ_STORAGE_KEY = 'newapi-userweb.notification-read-state'
+const NOTIFICATION_READ_STORAGE_EVENT = 'newapi-userweb:notification-read-state'
+const DEFAULT_NOTIFICATION_READ_STATE: NotificationReadState = { announcementKeys: [] }
+const DEFAULT_NOTIFICATION_READ_STATE_SNAPSHOT = JSON.stringify(DEFAULT_NOTIFICATION_READ_STATE)
+const SERVER_NOTIFICATION_READ_STATE_SNAPSHOT = `server:${DEFAULT_NOTIFICATION_READ_STATE_SNAPSHOT}`
+
+function hashString(input: string): string {
+  let hash = 0
+
+  for (let index = 0; index < input.length; index += 1) {
+    hash = (hash << 5) - hash + input.charCodeAt(index)
+    hash |= 0
+  }
+
+  return Math.abs(hash).toString(36)
+}
+
+function getNoticeKey(content: string) {
+  return `notice:${hashString(content.trim())}`
+}
+
+function getAnnouncementKey(item: Announcement, index: number) {
+  if (item.id !== undefined && item.id !== null) {
+    return `announcement:id:${String(item.id)}`
+  }
+
+  return `announcement:${hashString(
+    JSON.stringify({
+      publishDate: item.publishDate ?? '',
       content: item.content?.trim() ?? '',
-      publishDate: item.publishDate,
-      extra: item.extra?.trim(),
-      type: item.type,
-    }))
+      extra: item.extra?.trim() ?? '',
+      type: item.type ?? '',
+      index,
+    })
+  )}`
+}
+
+function buildNoticeItem(noticeText: string): NoticeItem | null {
+  const content = noticeText.trim()
+
+  if (!content) {
+    return null
+  }
+
+  return {
+    id: 'system-notice',
+    key: getNoticeKey(content),
+    kind: 'notice',
+    content,
+  }
+}
+
+function buildAnnouncementItems(announcements: Announcement[] | undefined): NoticeItem[] {
+  return (announcements ?? [])
+    .map((item, index) => {
+      const content = item.content?.trim() ?? ''
+
+      return {
+        id: `announcement-${item.id ?? item.publishDate ?? index}`,
+        key: getAnnouncementKey(item, index),
+        kind: 'announcement' as const,
+        content,
+        publishDate: item.publishDate,
+        extra: item.extra?.trim(),
+        type: item.type,
+      }
+    })
     .filter((item) => item.content.length > 0)
+}
 
-  if (items.length > 0) {
-    return items
+function parseNotificationReadStateSnapshot(snapshot: string): NotificationReadState {
+  try {
+    const raw = snapshot.startsWith('client:') || snapshot.startsWith('server:')
+      ? snapshot.slice(snapshot.indexOf(':') + 1)
+      : snapshot
+    const parsed = JSON.parse(raw) as Partial<NotificationReadState>
+
+    return {
+      noticeKey: typeof parsed.noticeKey === 'string' ? parsed.noticeKey : undefined,
+      announcementKeys: Array.isArray(parsed.announcementKeys)
+        ? parsed.announcementKeys.filter((key): key is string => typeof key === 'string')
+        : [],
+    }
+  } catch {
+    return DEFAULT_NOTIFICATION_READ_STATE
+  }
+}
+
+function getNotificationReadStateSnapshot() {
+  if (typeof window === 'undefined') {
+    return SERVER_NOTIFICATION_READ_STATE_SNAPSHOT
   }
 
-  if (!fallbackNotice) {
-    return []
+  return `client:${
+    window.localStorage.getItem(NOTIFICATION_READ_STORAGE_KEY) ??
+    DEFAULT_NOTIFICATION_READ_STATE_SNAPSHOT
+  }`
+}
+
+function subscribeNotificationReadState(onStoreChange: () => void) {
+  if (typeof window === 'undefined') {
+    return () => {}
   }
 
-  return [
-    {
-      id: 'legacy-notice',
-      content: fallbackNotice,
-    },
-  ]
+  const handleStorage = (event: StorageEvent) => {
+    if (event.key === NOTIFICATION_READ_STORAGE_KEY) {
+      onStoreChange()
+    }
+  }
+
+  window.addEventListener('storage', handleStorage)
+  window.addEventListener(NOTIFICATION_READ_STORAGE_EVENT, onStoreChange)
+
+  return () => {
+    window.removeEventListener('storage', handleStorage)
+    window.removeEventListener(NOTIFICATION_READ_STORAGE_EVENT, onStoreChange)
+  }
+}
+
+function saveNotificationReadState(state: NotificationReadState) {
+  try {
+    window.localStorage.setItem(NOTIFICATION_READ_STORAGE_KEY, JSON.stringify(state))
+    window.dispatchEvent(new Event(NOTIFICATION_READ_STORAGE_EVENT))
+  } catch {
+    // Ignore storage failures so notifications remain usable in restricted browsers.
+  }
+}
+
+function mergeReadState(
+  current: NotificationReadState,
+  noticeItem: NoticeItem | null,
+  announcementItems: NoticeItem[]
+): NotificationReadState {
+  const announcementKeys = new Set(current.announcementKeys)
+
+  for (const item of announcementItems) {
+    announcementKeys.add(item.key)
+  }
+
+  return {
+    noticeKey: noticeItem?.key ?? current.noticeKey,
+    announcementKeys: Array.from(announcementKeys),
+  }
 }
 
 function formatNoticeDate(value?: string) {
@@ -137,6 +262,32 @@ function formatNoticeDate(value?: string) {
     hour: '2-digit',
     minute: '2-digit',
   }).format(date)
+}
+
+function HeaderIconLink({
+  href,
+  label,
+  icon,
+}: {
+  href: string
+  label: string
+  icon: ComponentType<{ className?: string }>
+}) {
+  const Icon = icon
+
+  return (
+    <Link
+      href={href}
+      aria-label={label}
+      title={label}
+      className='group relative inline-flex size-10 items-center justify-center rounded-full text-[var(--muted)] hover:bg-[rgba(15,23,42,0.05)] hover:text-[var(--foreground)]'
+    >
+      <Icon className='size-4.5' />
+      <span className='pointer-events-none absolute left-1/2 top-full z-10 mt-2 -translate-x-1/2 rounded-full bg-[var(--foreground)] px-2.5 py-1 text-xs font-medium whitespace-nowrap text-[var(--background)] opacity-0 shadow-[0_10px_30px_rgba(15,23,42,0.18)] transition-opacity duration-150 group-hover:opacity-100'>
+        {label}
+      </span>
+    </Link>
+  )
 }
 
 function MarkdownNotice({ content }: { content: string }) {
@@ -383,6 +534,20 @@ function formatLatency(value?: number) {
   return `${(duration / 60_000).toFixed(1)} min`
 }
 
+function formatLogContent(value?: string) {
+  const content = value?.trim()
+
+  if (!content) {
+    return '无额外内容'
+  }
+
+  try {
+    return JSON.stringify(JSON.parse(content), null, 2)
+  } catch {
+    return content
+  }
+}
+
 function getResetTarget(subscription: SubscriptionSummary | undefined, nowMs: number) {
   const active = subscription?.subscriptions?.find(
     (item) => item.subscription?.status === 'active'
@@ -605,7 +770,9 @@ export function DashboardOverview({
   const dashboardTokens = tokens.data?.items ?? []
   const genericChatTemplates = parseGenericChatTemplates(systemStatus?.chats)
   const noticeText = notice.data?.trim() ?? ''
-  const noticeItems = buildNoticeItems(systemStatus?.announcements, noticeText)
+  const noticeItem = buildNoticeItem(noticeText)
+  const announcementItems = buildAnnouncementItems(systemStatus?.announcements)
+  const noticeItems = noticeItem ? [noticeItem, ...announcementItems] : announcementItems
 
   const [range, setRange] = useState<RangeKey>('today')
   const [modelFilter, setModelFilter] = useState('')
@@ -630,6 +797,29 @@ export function DashboardOverview({
   const deferredModelFilter = useDeferredValue(modelFilter.trim())
   const deferredTokenFilter = useDeferredValue(tokenFilter.trim())
   const deferredRequestIdFilter = useDeferredValue(requestIdFilter.trim())
+  const notificationReadStateSnapshot = useSyncExternalStore(
+    subscribeNotificationReadState,
+    getNotificationReadStateSnapshot,
+    () => SERVER_NOTIFICATION_READ_STATE_SNAPSHOT
+  )
+  const notificationReadStateLoaded = notificationReadStateSnapshot.startsWith('client:')
+  const notificationReadState = parseNotificationReadStateSnapshot(notificationReadStateSnapshot)
+  const readAnnouncementKeys = notificationReadState.announcementKeys
+  const unreadNoticeCount =
+    notificationReadStateLoaded && noticeItem && notificationReadState.noticeKey !== noticeItem.key
+      ? 1
+      : 0
+  const unreadAnnouncementCount = notificationReadStateLoaded
+    ? announcementItems.filter((item) => !readAnnouncementKeys.includes(item.key)).length
+    : 0
+  const unreadNotificationCount = unreadNoticeCount + unreadAnnouncementCount
+  const hasUnreadNotifications = unreadNotificationCount > 0
+  const notificationSummary = [
+    noticeItem ? '通知 1 条' : '',
+    announcementItems.length ? `公告 ${announcementItems.length} 条` : '',
+  ]
+    .filter(Boolean)
+    .join(' · ')
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -638,6 +828,18 @@ export function DashboardOverview({
 
     return () => window.clearInterval(timer)
   }, [])
+
+  useEffect(() => {
+    if (!notificationReadStateLoaded || !hasUnreadNotifications) {
+      return
+    }
+
+    const timer = window.setTimeout(() => {
+      setNoticeOpen(true)
+    }, 0)
+
+    return () => window.clearTimeout(timer)
+  }, [hasUnreadNotifications, notificationReadStateLoaded])
 
   const selectedToken = dashboardTokens[0] ?? null
   const activeChatTemplateName =
@@ -777,49 +979,71 @@ export function DashboardOverview({
     }))
   }
 
+  function markCurrentNotificationsRead() {
+    const nextState = mergeReadState(notificationReadState, noticeItem, announcementItems)
+
+    saveNotificationReadState(nextState)
+  }
+
+  function handleCloseNotifications() {
+    if (noticeItems.length > 0) {
+      markCurrentNotificationsRead()
+    }
+
+    setNoticeOpen(false)
+  }
+
   return (
     <>
       <div className='space-y-6'>
-        <div className='flex flex-col gap-4 rounded-[var(--radius-xl)] border border-[var(--border)] bg-[rgba(255,255,255,0.92)] px-5 py-4 shadow-[var(--shadow-soft)] md:flex-row md:items-center md:justify-between'>
-          <div>
-            <div className='flex flex-wrap items-center gap-3 text-sm text-[var(--muted)]'>
-              <Link href='/' className='flex items-center gap-2 font-medium text-[var(--muted-strong)] hover:text-[var(--foreground)]'>
-                <Sparkles className='size-4 text-[var(--accent)]' />
+        <div className='rounded-[calc(var(--radius-xl)+0.25rem)] border border-[rgba(15,23,42,0.07)] bg-[rgba(255,255,255,0.78)] px-4 py-3 shadow-[0_18px_50px_rgba(15,23,42,0.06)] backdrop-blur-xl lg:px-5'>
+          <div className='flex items-center justify-between gap-4'>
+            <Link href='/' className='inline-flex min-w-0 items-center gap-3 text-[var(--foreground)]'>
+              <span className='flex size-10 items-center justify-center overflow-hidden rounded-2xl bg-[var(--surface)] ring-1 ring-[rgba(15,23,42,0.08)]'>
+                <Image
+                  src='/brand/moretoken-icon.png'
+                  alt='MoreToken'
+                  width={40}
+                  height={40}
+                  className='size-full object-cover'
+                  priority
+                />
+              </span>
+              <span className='truncate text-xl font-semibold tracking-[-0.04em]'>
                 MoreToken
-              </Link>
-              <div className='hidden h-4 w-px bg-[var(--border)] md:block' />
-              <div className='hidden items-center gap-3 md:flex'>
-                <Link href='/' className='hover:text-[var(--foreground)]'>
-                  首页
-                </Link>
-                <Link href='/models' className='hover:text-[var(--foreground)]'>
-                  模型与价格
-                </Link>
-                <Link href='/tutorial' className='hover:text-[var(--foreground)]'>
-                  教程
-                </Link>
-              </div>
-            </div>
-            <h1 className='mt-2 text-2xl font-semibold text-[var(--foreground)]'>控制台</h1>
-          </div>
+              </span>
+            </Link>
 
-          <div className='flex flex-wrap items-center gap-3'>
-            <Button variant='secondary' size='sm' onClick={() => setNoticeOpen(true)}>
-              <Bell className='size-4' />
-              通知
-              {noticeItems.length ? (
-                <span className='ml-1 inline-flex size-2 rounded-full bg-[var(--accent)]' />
+            <div className='flex shrink-0 items-center gap-2.5'>
+              <HeaderIconLink href='/' label='首页' icon={House} />
+              <Button
+                variant='ghost'
+                size='sm'
+                aria-label='通知与公告'
+                title='通知与公告'
+                className='group relative size-10 rounded-full border border-[rgba(15,23,42,0.07)] bg-[rgba(255,255,255,0.68)] p-0 text-[var(--foreground)] shadow-none hover:border-[rgba(15,23,42,0.12)] hover:bg-white'
+                onClick={() => setNoticeOpen(true)}
+              >
+                <Bell className='size-4' />
+                {hasUnreadNotifications ? (
+                  <span className='absolute -right-1 -top-1 inline-flex min-w-5 items-center justify-center rounded-full bg-[var(--accent)] px-1.5 text-[11px] font-semibold leading-5 text-[var(--accent-foreground)]'>
+                    {unreadNotificationCount > 9 ? '9+' : unreadNotificationCount}
+                  </span>
+                ) : null}
+                <span className='pointer-events-none absolute left-1/2 top-full z-10 mt-2 -translate-x-1/2 rounded-full bg-[var(--foreground)] px-2.5 py-1 text-xs font-medium whitespace-nowrap text-[var(--background)] opacity-0 shadow-[0_10px_30px_rgba(15,23,42,0.18)] transition-opacity duration-150 group-hover:opacity-100'>
+                  通知与公告
+                </span>
+              </Button>
+              {user ? (
+                <UserMenu
+                  profile={user}
+                  onOpenProfile={() => setProfileOpen(true)}
+                  onOpenSecurity={() => setSecurityOpen(true)}
+                  onOpenBilling={() => setBillingOpen(true)}
+                  onOpenKeys={() => setKeysOpen(true)}
+                />
               ) : null}
-            </Button>
-            {user ? (
-              <UserMenu
-                profile={user}
-                onOpenProfile={() => setProfileOpen(true)}
-                onOpenSecurity={() => setSecurityOpen(true)}
-                onOpenBilling={() => setBillingOpen(true)}
-                onOpenKeys={() => setKeysOpen(true)}
-              />
-            ) : null}
+            </div>
           </div>
         </div>
 
@@ -1179,32 +1403,54 @@ export function DashboardOverview({
                             </tr>
                             {isExpanded ? (
                               <tr>
-                                <Td colSpan={6} className='bg-[var(--surface-strong)] px-5 py-4'>
-                                  <div className='space-y-4'>
-                                    <div className='flex flex-wrap items-center gap-2'>
-                                      <Badge>类型 {formatNumber(log.type)}</Badge>
-                                      <Badge>耗时 {formatLatency(log.use_time)}</Badge>
-                                      <Badge>输入 {formatNumber(log.prompt_tokens ?? 0)}</Badge>
-                                      <Badge>输出 {formatNumber(log.completion_tokens ?? 0)}</Badge>
-                                      <Badge>总计 {formatNumber(totalTokens)}</Badge>
+                                <Td colSpan={6} className='bg-[var(--surface-strong)] px-5 py-3'>
+                                  <div className='grid gap-3 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]'>
+                                    <div className='grid grid-cols-2 gap-2 md:grid-cols-3'>
+                                      {[
+                                        ['日志 ID', formatNumber(log.id)],
+                                        ['类型', formatNumber(log.type)],
+                                        ['时间', formatDateTime(log.created_at, 'seconds')],
+                                        ['模型', log.model_name || '-'],
+                                        ['令牌', log.token_name || '-'],
+                                        ['耗时', formatLatency(log.use_time)],
+                                        ['输入', formatNumber(log.prompt_tokens ?? 0)],
+                                        ['输出', formatNumber(log.completion_tokens ?? 0)],
+                                        ['总计', formatNumber(totalTokens)],
+                                        ['费用', formatQuotaValue(log.quota, systemStatus)],
+                                      ].map(([label, value]) => (
+                                        <div
+                                          key={label}
+                                          className='min-w-0 rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5'
+                                        >
+                                          <p className='text-[11px] uppercase tracking-[0.12em] text-[var(--muted)]'>
+                                            {label}
+                                          </p>
+                                          <p className='truncate text-sm font-semibold text-[var(--foreground)]'>
+                                            {value}
+                                          </p>
+                                        </div>
+                                      ))}
                                     </div>
 
-                                    <div className='rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)]'>
-                                      <div className='border-b border-[var(--border)] px-4 py-3'>
-                                        <p className='text-xs uppercase tracking-[0.14em] text-[var(--muted)]'>
+                                    <div className='min-w-0 rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)]'>
+                                      <div className='grid gap-2 border-b border-[var(--border)] px-3 py-1.5 md:grid-cols-[88px_1fr] md:items-center'>
+                                        <p className='text-[11px] uppercase tracking-[0.12em] text-[var(--muted)]'>
                                           Request ID
                                         </p>
-                                        <p className='mt-1 break-all font-mono text-xs text-[var(--foreground)]'>
+                                        <p className='break-all font-mono text-xs text-[var(--foreground)]'>
                                           {log.request_id || '-'}
                                         </p>
                                       </div>
 
-                                      <div className='px-4 py-3'>
-                                        <p className='text-xs uppercase tracking-[0.14em] text-[var(--muted)]'>
-                                          内容
-                                        </p>
-                                        <pre className='mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-words text-xs leading-6 text-[var(--muted-strong)]'>
-                                          {log.content?.trim() || '无额外内容'}
+                                      <div className='px-3 py-1.5'>
+                                        <div className='mb-1 flex items-center justify-between gap-3'>
+                                          <p className='text-[11px] uppercase tracking-[0.12em] text-[var(--muted)]'>
+                                            内容
+                                          </p>
+                                          <Badge>{log.content?.trim() ? '已返回' : '无内容'}</Badge>
+                                        </div>
+                                        <pre className='max-h-32 overflow-auto whitespace-pre-wrap break-words rounded-[var(--radius-sm)] bg-[var(--surface-strong)] px-3 py-2 font-mono text-xs leading-5 text-[var(--muted-strong)]'>
+                                          {formatLogContent(log.content)}
                                         </pre>
                                       </div>
                                     </div>
@@ -1254,44 +1500,110 @@ export function DashboardOverview({
 
       <Dialog
         open={noticeOpen}
-        onClose={() => setNoticeOpen(false)}
+        onClose={handleCloseNotifications}
         title='通知与公告'
+        description={
+          noticeItems.length
+            ? `${notificationSummary || '暂无内容'}${hasUnreadNotifications ? ` · ${unreadNotificationCount} 条未读` : ''}`
+            : '暂无通知或公告'
+        }
         className='max-w-3xl'
       >
         <div className='space-y-4 p-6'>
           {noticeItems.length ? (
-            noticeItems.map((item, index) => {
-              const publishDate = formatNoticeDate(item.publishDate)
-
-              return (
-                <div
-                  key={item.id}
-                  className='rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--surface)] p-5'
+            <>
+              <div className='flex flex-col gap-3 rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--surface-strong)] p-4 sm:flex-row sm:items-center sm:justify-between'>
+                <div className='space-y-1'>
+                  <p className='text-sm font-semibold text-[var(--foreground)]'>
+                    {hasUnreadNotifications
+                      ? `有 ${unreadNotificationCount} 条未读内容`
+                      : '当前内容均已读'}
+                  </p>
+                  <p className='text-xs text-[var(--muted)]'>
+                    关闭弹窗会自动标记当前通知和公告为已读。
+                  </p>
+                </div>
+                <Button
+                  type='button'
+                  size='sm'
+                  variant='secondary'
+                  disabled={!hasUnreadNotifications}
+                  onClick={markCurrentNotificationsRead}
                 >
+                  <CheckCheck className='mr-2 size-4' />
+                  全部标为已读
+                </Button>
+              </div>
+
+              {noticeItem ? (
+                <section className='rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--surface)] p-5'>
                   <div className='flex flex-wrap items-center justify-between gap-3'>
                     <div className='flex items-center gap-2'>
                       <Bell className='size-4 text-[var(--accent)]' />
-                      <p className='text-sm font-semibold text-[var(--foreground)]'>
-                        {noticeItems.length > 1 ? `公告 ${index + 1}` : '最新公告'}
-                      </p>
+                      <p className='text-sm font-semibold text-[var(--foreground)]'>系统通知</p>
+                      {unreadNoticeCount > 0 ? <Badge tone='warning'>未读</Badge> : null}
                     </div>
-                    {publishDate ? (
-                      <span className='text-xs text-[var(--muted)]'>{publishDate}</span>
-                    ) : null}
+                    <Badge>Notice</Badge>
                   </div>
                   <div className='mt-4 break-words'>
-                    <MarkdownNotice content={item.content} />
+                    <MarkdownNotice content={noticeItem.content} />
                   </div>
-                  {item.extra ? (
-                    <div className='mt-4 rounded-[var(--radius-lg)] bg-[var(--surface-strong)] px-4 py-3'>
-                      <MarkdownNotice content={item.extra} />
-                    </div>
-                  ) : null}
-                </div>
-              )
-            })
+                </section>
+              ) : null}
+
+              {announcementItems.length ? (
+                <section className='space-y-3'>
+                  <div className='flex items-center gap-2 px-1'>
+                    <Megaphone className='size-4 text-[var(--accent)]' />
+                    <h3 className='text-sm font-semibold text-[var(--foreground)]'>系统公告</h3>
+                    {unreadAnnouncementCount > 0 ? (
+                      <Badge tone='warning'>{unreadAnnouncementCount} 条未读</Badge>
+                    ) : null}
+                  </div>
+
+                  {announcementItems.map((item, index) => {
+                    const publishDate = formatNoticeDate(item.publishDate)
+                    const isUnread =
+                      notificationReadStateLoaded && !readAnnouncementKeys.includes(item.key)
+
+                    return (
+                      <article
+                        key={item.id}
+                        className='rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--surface)] p-5'
+                      >
+                        <div className='flex flex-wrap items-center justify-between gap-3'>
+                          <div className='flex items-center gap-2'>
+                            <span className='inline-flex size-7 items-center justify-center rounded-full bg-[var(--accent-soft)] text-xs font-semibold text-[var(--accent-strong)]'>
+                              {index + 1}
+                            </span>
+                            <p className='text-sm font-semibold text-[var(--foreground)]'>
+                              公告 {index + 1}
+                            </p>
+                            {isUnread ? <Badge tone='warning'>未读</Badge> : null}
+                          </div>
+                          <div className='flex items-center gap-2'>
+                            {item.type ? <Badge>{item.type}</Badge> : null}
+                            {publishDate ? (
+                              <span className='text-xs text-[var(--muted)]'>{publishDate}</span>
+                            ) : null}
+                          </div>
+                        </div>
+                        <div className='mt-4 break-words'>
+                          <MarkdownNotice content={item.content} />
+                        </div>
+                        {item.extra ? (
+                          <div className='mt-4 rounded-[var(--radius-lg)] bg-[var(--surface-strong)] px-4 py-3'>
+                            <MarkdownNotice content={item.extra} />
+                          </div>
+                        ) : null}
+                      </article>
+                    )
+                  })}
+                </section>
+              ) : null}
+            </>
           ) : (
-            <EmptyState title='暂无通知' />
+            <EmptyState title='暂无通知与公告' />
           )}
         </div>
       </Dialog>
@@ -1493,6 +1805,8 @@ console.log(data)`}
       >
         <div className='p-6'>
           <BillingPage
+            profile={profile}
+            status={status}
             topupInfo={topupInfo}
             topupRecords={topupRecords}
             subscription={subscription}

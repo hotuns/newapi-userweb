@@ -29,9 +29,6 @@ export function ModelsPage({
         <div className='rounded-[var(--radius-xl)] border border-[var(--border)] bg-[rgba(255,253,247,0.86)] p-6 shadow-[var(--shadow-soft)]'>
           <Badge>公开模型浏览页</Badge>
           <h1 className='mt-4 text-4xl font-semibold text-[var(--foreground)]'>模型与价格</h1>
-          <p className='mt-3 max-w-3xl text-sm leading-7 text-[var(--muted)]'>
-            这个页面对未登录用户也开放，用于浏览当前实例公开的模型与价格概览。
-          </p>
           {authenticated ? (
             <div className='mt-6 rounded-[var(--radius-lg)] bg-[var(--accent-soft)] p-4 text-sm text-[var(--muted-strong)]'>
               你当前可用的模型数量：<strong>{userModels.length}</strong>

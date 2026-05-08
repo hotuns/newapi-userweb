@@ -20,7 +20,11 @@ export const metadata: Metadata = {
     default: 'MoreToken',
     template: '%s | MoreToken',
   },
-  description: 'MoreToken 是专业、高性价比的大模型 API 服务平台。',
+  description: 'MoreToken 把 OpenAI API 能力更便宜地用起来，让同样预算获得更多 token。',
+  icons: {
+    icon: '/brand/moretoken-icon.png',
+    apple: '/brand/moretoken-icon.png',
+  },
 }
 
 export default function RootLayout({

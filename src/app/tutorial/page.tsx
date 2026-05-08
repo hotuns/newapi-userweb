@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { ArrowRight, BadgeCheck, CreditCard, KeyRound, LineChart, Sparkles } from 'lucide-react'
+import { BadgeCheck, CreditCard, KeyRound, LineChart, Sparkles } from 'lucide-react'
 import { SiteHeader } from '@/components/shell/site-header'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -51,35 +51,6 @@ export default async function TutorialPage() {
       <SiteHeader authenticated={authenticated} />
 
       <main>
-        <section className='mx-auto max-w-7xl px-6 py-14 lg:px-8 lg:py-20'>
-          <div className='max-w-4xl space-y-5'>
-            <p className='text-sm font-semibold uppercase tracking-[0.18em] text-[var(--accent-strong)]'>
-              MoreToken 教程
-            </p>
-            <h1 className='text-5xl font-semibold leading-[1.04] tracking-tight text-[var(--foreground)]'>
-              从注册到使用，
-              <br />
-              快速上手 MoreToken
-            </h1>
-            <p className='max-w-2xl text-lg leading-8 text-[var(--muted-strong)]'>
-              这是一份面向普通用户的快速开始指南，帮助你更快完成注册、创建访问令牌、查看模型与价格，以及理解余额和账单。
-            </p>
-            <div className='flex flex-col gap-3 sm:flex-row'>
-              <Link href={authenticated ? '/dashboard' : '/register'}>
-                <Button size='lg'>
-                  {authenticated ? '进入控制台' : '开始使用'}
-                  <ArrowRight className='ml-2 size-4' />
-                </Button>
-              </Link>
-              <Link href='/models'>
-                <Button size='lg' variant='secondary'>
-                  浏览模型与价格
-                </Button>
-              </Link>
-            </div>
-          </div>
-        </section>
-
         <section className='mx-auto max-w-7xl px-6 py-6 lg:px-8 lg:py-8'>
           <div className='grid gap-4 md:grid-cols-2 xl:grid-cols-4'>
             {steps.map((step) => {

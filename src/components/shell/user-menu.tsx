@@ -1,6 +1,6 @@
 'use client'
 
-import { ChevronDown, CreditCard, KeyRound, LogOut, Settings2, Shield } from 'lucide-react'
+import { CreditCard, KeyRound, LogOut, Settings2, Shield } from 'lucide-react'
 import { useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
@@ -66,18 +66,16 @@ export function UserMenu({
       <DropdownMenuTrigger asChild>
         <button
           type='button'
-          className='flex items-center gap-3 rounded-full border border-[var(--border)] bg-[rgba(255,255,255,0.94)] px-2 py-2 shadow-[var(--shadow-card)] transition-colors hover:border-[rgba(16,163,127,0.24)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--background)]'
+          aria-label={displayName}
+          title={displayName}
+          className='group relative flex size-10 items-center justify-center rounded-full text-left transition-colors hover:bg-[rgba(15,23,42,0.04)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--background)]'
         >
-          <span className='flex size-10 items-center justify-center rounded-full bg-[var(--accent)] text-sm font-semibold text-[var(--accent-foreground)]'>
+          <span className='flex size-9 items-center justify-center rounded-full bg-[rgba(16,163,127,0.12)] text-sm font-semibold text-[var(--accent-strong)]'>
             {initials}
           </span>
-          <span className='hidden text-left sm:block'>
-            <span className='block text-sm font-semibold text-[var(--foreground)]'>{displayName}</span>
-            <span className='block text-xs text-[var(--muted)]'>
-              @{profile.username} · {profile.group}
-            </span>
+          <span className='pointer-events-none absolute left-1/2 top-full z-10 mt-2 -translate-x-1/2 rounded-full bg-[var(--foreground)] px-2.5 py-1 text-xs font-medium whitespace-nowrap text-[var(--background)] opacity-0 shadow-[0_10px_30px_rgba(15,23,42,0.18)] transition-opacity duration-150 group-hover:opacity-100'>
+            {displayName}
           </span>
-          <ChevronDown className='mr-1 size-4 text-[var(--muted)]' />
         </button>
       </DropdownMenuTrigger>
 

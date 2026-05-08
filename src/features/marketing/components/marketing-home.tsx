@@ -8,7 +8,9 @@ import {
   Coins,
   Gauge,
   Layers3,
+  Route,
   ShieldCheck,
+  Sparkles,
   Wallet,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
@@ -29,69 +31,75 @@ type MarketingHomeProps = {
 
 const valueProps = [
   {
-    title: '专业交付',
-    description: '围绕大模型 API 使用场景设计，适合产品上线、团队协作和长期稳定使用。',
+    title: '把 OpenAI API 能力搬过来',
+    description: '保留你熟悉的大模型 API 使用方式，把调用、密钥和模型选择放进一个更容易管理的入口。',
     icon: ShieldCheck,
   },
   {
-    title: '高性价比',
-    description: '在模型选择、计费方式和使用可见性之间做平衡，把成本控制交还给用户。',
+    title: '更便宜，预算更耐用',
+    description: '核心目标很简单：降低调用成本，让同样的预算覆盖更多请求、更多实验和更长周期。',
     icon: Coins,
   },
   {
-    title: '统一入口',
-    description: '一个账户查看模型、余额、订阅、访问令牌和使用记录，体验更连贯。',
+    title: '更多 token，少一点心疼',
+    description: 'MoreToken 的名字就是承诺：把钱尽量花在模型输出上，而不是被复杂成本悄悄吃掉。',
     icon: Layers3,
   },
   {
-    title: '透明可控',
-    description: '价格预览、用量趋势、账单记录和订阅状态都能直接查看，不靠猜测。',
+    title: '价格和用量都看得见',
+    description: '模型价格、余额、用量趋势和账单记录集中展示，知道每次调用大概花在哪里。',
     icon: Gauge,
   },
 ]
 
 const scenarios = [
   {
-    title: 'AI 产品与应用',
-    description: '适合需要快速接入大模型能力的产品团队、SaaS 服务和新项目。',
+    title: '正在做 AI 产品',
+    description: '需要频繁调模型、跑功能验证、优化提示词时，更低成本会直接放大迭代速度。',
     icon: Blocks,
   },
   {
-    title: '企业内部工具',
-    description: '把模型能力接进知识库、客服、办公流程或内部助手，同时保持成本可见。',
+    title: '团队内部工具',
+    description: '把模型能力接进知识库、客服、办公流程或内部助手，同时让每个阶段的花费可见。',
     icon: Building2,
   },
   {
     title: '自动化与 Agent',
-    description: '适合需要稳定调用、清晰计费和多模型可选能力的自动化场景。',
+    description: '长链路任务会消耗大量 token。MoreToken 让你更敢测试、更敢跑批量任务。',
     icon: BrainCircuit,
   },
 ]
 
 const experienceHighlights = [
-  '主流模型统一接入',
-  '价格与用量透明',
-  '余额与订阅可见',
-  '访问令牌独立管理',
+  'OpenAI API 能力',
+  '更低调用成本',
+  '更多可用 token',
+  '用量账单清楚',
 ]
 
 const faqs = [
   {
     question: 'MoreToken 提供的是什么服务？',
-    answer: 'MoreToken 是面向大模型使用场景的 API 服务平台，帮助你更专业地使用、管理和追踪模型能力。',
+    answer: 'MoreToken 把 OpenAI API 相关的大模型能力整理成更便宜、更好管理的调用入口，适合需要长期、频繁使用模型的个人和团队。',
   },
   {
-    question: '为什么强调高性价比？',
-    answer: '因为模型能力不仅要能用，还要算得清。MoreToken 把价格预览、用量记录和账单信息放到同一套体验里，方便你控制成本。',
+    question: '为什么叫 MoreToken？',
+    answer: '因为我们希望同样的预算能换到更多 token。对开发、测试、Agent 和批量任务来说，更多 token 就意味着更多尝试空间。',
   },
   {
     question: '我可以先看模型和价格吗？',
-    answer: '可以。首页和模型页都支持公开浏览模型与价格预览，注册前也能先了解可用能力。',
+    answer: '可以。模型与价格页支持公开浏览，注册前也能先判断可用能力和大致成本。',
   },
   {
     question: '注册后可以做什么？',
-    answer: '注册后你可以进入 MoreToken 控制台，查看余额、订阅、模型、访问令牌、用量记录和账单概览。',
+    answer: '注册后可以进入控制台管理访问令牌，查看余额、订阅、用量趋势和账单记录，然后把 API 接入你的应用。',
   },
+]
+
+const comparisonRows = [
+  { label: '接入目标', value: '用熟悉的 API 方式调用大模型能力' },
+  { label: '核心优势', value: '更低价格，让预算换到更多 token' },
+  { label: '管理方式', value: '密钥、余额、订阅、账单集中在控制台' },
 ]
 
 function renderPriceSummary(item: PricingPreviewItem) {
@@ -121,18 +129,18 @@ export function MarketingHome({
     <div className='min-h-screen'>
       <SiteHeader authenticated={authenticated} />
       <main>
-        <section className='mx-auto grid w-full max-w-7xl gap-10 px-6 py-14 lg:grid-cols-[1.08fr_0.92fr] lg:px-8 lg:py-22'>
+        <section className='mx-auto grid w-full max-w-7xl gap-10 px-6 py-14 lg:grid-cols-[1.08fr_0.92fr] lg:px-8 lg:py-20'>
           <div className='space-y-7'>
-            <Badge tone='warning'>MoreToken 大模型 API</Badge>
+            <Badge tone='warning'>MoreToken = more token</Badge>
 
             <div className='space-y-5'>
-              <h1 className='max-w-4xl text-5xl font-semibold leading-[1.02] tracking-tight text-[var(--foreground)] md:text-6xl'>
-                专业、稳定、高性价比的
+              <h1 className='max-w-4xl text-5xl font-semibold leading-[1.04] text-[var(--foreground)] md:text-6xl'>
+                MoreToken，
                 <br />
-                大模型 API 服务
+                更便宜地用起来。
               </h1>
               <p className='max-w-2xl text-lg leading-8 text-[var(--muted-strong)]'>
-                MoreToken 面向真实使用场景提供大模型 API 能力。你可以在一个更清晰的体系里完成模型选择、额度管理、访问控制和用量追踪，让模型能力真正成为可交付、可持续、可控成本的服务。
+                MoreToken 做的事情很直接：把 OpenAI API 相关的大模型能力搬到一个更省钱、更好管理的入口里。你继续用熟悉的方式接入模型，但同样的预算可以跑更多请求、得到更多 token。
               </p>
             </div>
 
@@ -163,34 +171,49 @@ export function MarketingHome({
             </div>
           </div>
 
-          <Card className='relative overflow-hidden border-none bg-[linear-gradient(145deg,#0f1720_0%,#102720_38%,#10a37f_100%)] text-white shadow-[0_36px_90px_rgba(15,23,42,0.26)]'>
-            <div className='absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.18),transparent_28%),radial-gradient(circle_at_bottom_left,rgba(110,231,183,0.18),transparent_38%)]' />
+          <Card className='relative overflow-hidden border-none bg-[#101815] text-white shadow-[0_36px_90px_rgba(15,23,42,0.26)]'>
+            <div className='absolute inset-x-0 top-0 h-1 bg-[var(--accent)]' />
             <CardContent className='relative flex h-full flex-col justify-between gap-8 p-8'>
-              <div className='space-y-5'>
-                <p className='text-sm uppercase tracking-[0.18em] text-[rgba(236,253,245,0.76)]'>
-                  为什么选择 MoreToken
-                </p>
-                <div className='grid gap-4'>
-                  <div className='rounded-[var(--radius-lg)] bg-[rgba(255,255,255,0.10)] p-5 backdrop-blur'>
-                    <p className='text-sm text-[rgba(236,253,245,0.76)]'>专业能力</p>
-                    <p className='mt-2 text-2xl font-semibold'>围绕大模型 API 而设计</p>
+              <div className='space-y-6'>
+                <div className='flex items-center gap-3 text-sm text-[rgba(236,253,245,0.76)]'>
+                  <Route className='size-4 text-[#7ddfbd]' />
+                  <span>更短的路，更低的成本</span>
+                </div>
+                <div>
+                  <p className='text-sm text-[rgba(236,253,245,0.76)]'>你的应用</p>
+                  <div className='mt-3 flex items-center gap-3'>
+                    <div className='h-px flex-1 bg-[rgba(236,253,245,0.22)]' />
+                    <ArrowRight className='size-5 text-[#7ddfbd]' />
+                    <div className='h-px flex-1 bg-[rgba(236,253,245,0.22)]' />
                   </div>
-                  <div className='rounded-[var(--radius-lg)] bg-[rgba(255,255,255,0.08)] p-5 backdrop-blur'>
-                    <p className='text-sm text-[rgba(236,253,245,0.76)]'>成本体验</p>
-                    <p className='mt-2 text-2xl font-semibold'>价格、余额、账单都看得见</p>
+                  <div className='mt-3 rounded-[var(--radius-lg)] border border-[rgba(236,253,245,0.14)] bg-[rgba(255,255,255,0.08)] p-5'>
+                    <div className='flex items-center gap-3'>
+                      <Sparkles className='size-5 text-[#7ddfbd]' />
+                      <p className='text-2xl font-semibold'>MoreToken API</p>
+                    </div>
+                    <p className='mt-3 text-sm leading-6 text-[rgba(236,253,245,0.78)]'>
+                      OpenAI API 能力接入、模型价格预览、密钥管理、余额和用量记录集中处理。
+                    </p>
                   </div>
+                  <div className='mt-3 flex items-center gap-3'>
+                    <div className='h-px flex-1 bg-[rgba(236,253,245,0.22)]' />
+                    <ArrowRight className='size-5 text-[#7ddfbd]' />
+                    <div className='h-px flex-1 bg-[rgba(236,253,245,0.22)]' />
+                  </div>
+                  <p className='mt-3 text-sm text-[rgba(236,253,245,0.76)]'>更多输出、更少成本压力</p>
                 </div>
               </div>
 
-              <div className='grid gap-3 sm:grid-cols-2'>
-                <div className='rounded-[var(--radius-lg)] bg-[rgba(255,255,255,0.08)] p-4'>
-                  <p className='text-sm text-[rgba(236,253,245,0.76)]'>适合</p>
-                  <p className='mt-2 text-lg font-semibold'>产品团队、企业工具、自动化场景</p>
-                </div>
-                <div className='rounded-[var(--radius-lg)] bg-[rgba(255,255,255,0.08)] p-4'>
-                  <p className='text-sm text-[rgba(236,253,245,0.76)]'>重点</p>
-                  <p className='mt-2 text-lg font-semibold'>专业交付 + 高性价比 + 透明可控</p>
-                </div>
+              <div className='grid gap-3'>
+                {comparisonRows.map((row) => (
+                  <div
+                    key={row.label}
+                    className='grid gap-2 rounded-[var(--radius-lg)] bg-[rgba(255,255,255,0.08)] p-4 sm:grid-cols-[92px_1fr]'
+                  >
+                    <p className='text-sm text-[rgba(236,253,245,0.62)]'>{row.label}</p>
+                    <p className='text-sm font-semibold leading-6'>{row.value}</p>
+                  </div>
+                ))}
               </div>
             </CardContent>
           </Card>
@@ -222,10 +245,13 @@ export function MarketingHome({
         <section className='mx-auto max-w-7xl px-6 py-12 lg:px-8'>
           <div className='flex flex-col gap-4 md:flex-row md:items-end md:justify-between'>
             <div>
-              <Badge>适用场景</Badge>
+              <Badge>什么时候最有感</Badge>
               <h2 className='mt-4 text-3xl font-semibold text-[var(--foreground)]'>
-                不只是“能调用模型”，而是把模型能力真正用进业务和产品。
+                当 token 消耗开始变大，便宜一点就不只是便宜一点。
               </h2>
+              <p className='mt-3 max-w-2xl text-sm leading-6 text-[var(--muted)]'>
+                开发、测试、上线、批量任务都会反复消耗 token。MoreToken 希望把每一次调用的成本降下来，让模型能力更适合长期使用。
+              </p>
             </div>
           </div>
 
@@ -250,10 +276,13 @@ export function MarketingHome({
         <section className='mx-auto max-w-7xl px-6 py-12 lg:px-8'>
           <div className='flex flex-col gap-3 md:flex-row md:items-end md:justify-between'>
             <div>
-              <Badge tone='default'>热门模型与价格</Badge>
+              <Badge tone='default'>先看价格，再决定怎么用</Badge>
               <h2 className='mt-4 text-3xl font-semibold text-[var(--foreground)]'>
-                公开浏览热门模型与价格摘要，先判断能力和成本，再开始接入或使用。
+                模型能力摆在前面，调用成本也摆在前面。
               </h2>
+              <p className='mt-3 max-w-2xl text-sm leading-6 text-[var(--muted)]'>
+                你可以先浏览可用模型和价格摘要，再决定要接入哪个模型、要预留多少预算。
+              </p>
             </div>
             <Link href='/models'>
               <Button variant='secondary'>查看完整模型页</Button>
@@ -301,8 +330,8 @@ export function MarketingHome({
               </div>
             ) : (
               <EmptyState
-                title='热门模型价格即将展示'
-                description='当前实例还没有返回公开价格数据。模型页结构已经就绪，开放后会自动展示。'
+                title='模型价格即将展示'
+                description='当前实例还没有返回公开价格数据。开放后，这里会自动展示可用模型和价格摘要。'
                 action={
                   <Link href='/models'>
                     <Button variant='secondary'>打开模型页</Button>
@@ -332,7 +361,7 @@ export function MarketingHome({
           <div>
             <p className='text-lg font-semibold text-[var(--foreground)]'>MoreToken</p>
             <p className='mt-2 text-sm text-[var(--muted)]'>
-              专业、高性价比的大模型 API 服务平台。
+              OpenAI API 能力，更便宜地用起来。
             </p>
           </div>
 
