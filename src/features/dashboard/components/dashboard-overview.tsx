@@ -4,6 +4,8 @@ import Link from 'next/link'
 import { Fragment } from 'react'
 import { useEffect, useDeferredValue, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import {
   Activity,
   Bell,
@@ -32,6 +34,7 @@ import { Table, TableBody, TableHead, TableWrapper, Td, Th } from '@/components/
 import { buildGenericChatLaunchUrl, parseGenericChatTemplates } from '@/lib/chat-links'
 import { buildQueryString, cn, formatDateTime, formatNumber } from '@/lib/utils'
 import type {
+  Announcement,
   ApiResponse,
   PaginatedResponse,
   QuotaDataPoint,
@@ -73,11 +76,161 @@ type ChartBucket = {
   count: number
 }
 
+type NoticeItem = {
+  id: string
+  content: string
+  publishDate?: string
+  extra?: string
+  type?: Announcement['type']
+}
+
 const RANGE_OPTIONS: Array<{ key: RangeKey; label: string; days: number }> = [
   { key: 'today', label: '今日', days: 1 },
   { key: '3d', label: '三天', days: 3 },
   { key: '7d', label: '七天', days: 7 },
 ]
+
+function buildNoticeItems(
+  announcements: Announcement[] | undefined,
+  fallbackNotice: string
+): NoticeItem[] {
+  const items = (announcements ?? [])
+    .map((item, index) => ({
+      id: `${item.publishDate ?? 'announcement'}-${index}`,
+      content: item.content?.trim() ?? '',
+      publishDate: item.publishDate,
+      extra: item.extra?.trim(),
+      type: item.type,
+    }))
+    .filter((item) => item.content.length > 0)
+
+  if (items.length > 0) {
+    return items
+  }
+
+  if (!fallbackNotice) {
+    return []
+  }
+
+  return [
+    {
+      id: 'legacy-notice',
+      content: fallbackNotice,
+    },
+  ]
+}
+
+function formatNoticeDate(value?: string) {
+  if (!value) {
+    return ''
+  }
+
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return ''
+  }
+
+  return new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date)
+}
+
+function MarkdownNotice({ content }: { content: string }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        h1: ({ children }) => (
+          <h1 className='mt-4 text-xl font-semibold text-[var(--foreground)] first:mt-0'>
+            {children}
+          </h1>
+        ),
+        h2: ({ children }) => (
+          <h2 className='mt-4 text-lg font-semibold text-[var(--foreground)] first:mt-0'>
+            {children}
+          </h2>
+        ),
+        h3: ({ children }) => (
+          <h3 className='mt-4 text-base font-semibold text-[var(--foreground)] first:mt-0'>
+            {children}
+          </h3>
+        ),
+        p: ({ children }) => (
+          <p className='my-3 text-sm leading-7 text-[var(--muted-strong)] first:mt-0 last:mb-0'>
+            {children}
+          </p>
+        ),
+        ul: ({ children }) => (
+          <ul className='my-3 list-disc space-y-1.5 pl-5 text-sm leading-7 text-[var(--muted-strong)]'>
+            {children}
+          </ul>
+        ),
+        ol: ({ children }) => (
+          <ol className='my-3 list-decimal space-y-1.5 pl-5 text-sm leading-7 text-[var(--muted-strong)]'>
+            {children}
+          </ol>
+        ),
+        a: ({ children, href }) => (
+          <a
+            href={href}
+            target='_blank'
+            rel='noreferrer'
+            className='font-medium text-[var(--accent-strong)] underline underline-offset-4'
+          >
+            {children}
+          </a>
+        ),
+        blockquote: ({ children }) => (
+          <blockquote className='my-4 border-l-4 border-[var(--accent)] bg-[var(--accent-soft)] px-4 py-2 text-sm text-[var(--muted-strong)]'>
+            {children}
+          </blockquote>
+        ),
+        code: ({ children, className }) => {
+          const isBlock = className?.startsWith('language-')
+          if (isBlock) {
+            return (
+              <code className={cn(className, 'block overflow-x-auto text-xs leading-6')}>
+                {children}
+              </code>
+            )
+          }
+
+          return (
+            <code className='rounded bg-[var(--surface-strong)] px-1.5 py-0.5 font-mono text-xs text-[var(--foreground)]'>
+              {children}
+            </code>
+          )
+        },
+        pre: ({ children }) => (
+          <pre className='my-4 overflow-x-auto rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--foreground)] p-4 text-[var(--background)]'>
+            {children}
+          </pre>
+        ),
+        table: ({ children }) => (
+          <div className='my-4 overflow-x-auto rounded-[var(--radius-lg)] border border-[var(--border)]'>
+            <table className='min-w-full border-collapse text-left text-sm'>{children}</table>
+          </div>
+        ),
+        th: ({ children }) => (
+          <th className='border-b border-[var(--border)] bg-[var(--surface-strong)] px-3 py-2 font-semibold text-[var(--foreground)]'>
+            {children}
+          </th>
+        ),
+        td: ({ children }) => (
+          <td className='border-t border-[var(--border)] px-3 py-2 text-[var(--muted-strong)]'>
+            {children}
+          </td>
+        ),
+      }}
+    >
+      {content}
+    </ReactMarkdown>
+  )
+}
 
 function getRangeWindow(range: RangeKey) {
   const now = new Date()
@@ -452,6 +605,7 @@ export function DashboardOverview({
   const dashboardTokens = tokens.data?.items ?? []
   const genericChatTemplates = parseGenericChatTemplates(systemStatus?.chats)
   const noticeText = notice.data?.trim() ?? ''
+  const noticeItems = buildNoticeItems(systemStatus?.announcements, noticeText)
 
   const [range, setRange] = useState<RangeKey>('today')
   const [modelFilter, setModelFilter] = useState('')
@@ -653,7 +807,7 @@ export function DashboardOverview({
             <Button variant='secondary' size='sm' onClick={() => setNoticeOpen(true)}>
               <Bell className='size-4' />
               通知
-              {noticeText ? (
+              {noticeItems.length ? (
                 <span className='ml-1 inline-flex size-2 rounded-full bg-[var(--accent)]' />
               ) : null}
             </Button>
@@ -1105,16 +1259,37 @@ export function DashboardOverview({
         className='max-w-3xl'
       >
         <div className='space-y-4 p-6'>
-          {noticeText ? (
-            <div className='rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--surface)] p-5'>
-              <div className='flex items-center gap-2'>
-                <Bell className='size-4 text-[var(--accent)]' />
-                <p className='text-sm font-semibold text-[var(--foreground)]'>最新公告</p>
-              </div>
-              <div className='mt-4 whitespace-pre-wrap break-words text-sm leading-7 text-[var(--muted-strong)]'>
-                {noticeText}
-              </div>
-            </div>
+          {noticeItems.length ? (
+            noticeItems.map((item, index) => {
+              const publishDate = formatNoticeDate(item.publishDate)
+
+              return (
+                <div
+                  key={item.id}
+                  className='rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--surface)] p-5'
+                >
+                  <div className='flex flex-wrap items-center justify-between gap-3'>
+                    <div className='flex items-center gap-2'>
+                      <Bell className='size-4 text-[var(--accent)]' />
+                      <p className='text-sm font-semibold text-[var(--foreground)]'>
+                        {noticeItems.length > 1 ? `公告 ${index + 1}` : '最新公告'}
+                      </p>
+                    </div>
+                    {publishDate ? (
+                      <span className='text-xs text-[var(--muted)]'>{publishDate}</span>
+                    ) : null}
+                  </div>
+                  <div className='mt-4 break-words'>
+                    <MarkdownNotice content={item.content} />
+                  </div>
+                  {item.extra ? (
+                    <div className='mt-4 rounded-[var(--radius-lg)] bg-[var(--surface-strong)] px-4 py-3'>
+                      <MarkdownNotice content={item.extra} />
+                    </div>
+                  ) : null}
+                </div>
+              )
+            })
           ) : (
             <EmptyState title='暂无通知' />
           )}

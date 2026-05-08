@@ -9,7 +9,6 @@ const PUBLIC_PATHS = new Set([
   '/api/reset_password',
   '/api/user-agreement',
   '/api/privacy-policy',
-  '/api/subscription/plans',
 ])
 
 const PROTECTED_PREFIXES = [
@@ -25,6 +24,7 @@ const PROTECTED_PREFIXES = [
   '/api/user/pay',
   '/api/user/amount',
   '/api/subscription/self',
+  '/api/subscription/plans',
 ]
 
 export function isAllowedProxyPath(path: string) {

@@ -9,6 +9,13 @@ export type ApiResponse<T = unknown> = {
 
 export type ChatTemplateConfig = Record<string, string>
 
+export type Announcement = {
+  content: string
+  publishDate?: string
+  type?: 'default' | 'ongoing' | 'success' | 'warning' | 'error'
+  extra?: string
+}
+
 export type SystemStatus = {
   version?: string
   system_name?: string
@@ -25,6 +32,8 @@ export type SystemStatus = {
   user_agreement_enabled?: boolean
   privacy_policy_enabled?: boolean
   chats?: ChatTemplateConfig[]
+  announcements_enabled?: boolean
+  announcements?: Announcement[]
 }
 
 export type LoginResponse = ApiResponse<{

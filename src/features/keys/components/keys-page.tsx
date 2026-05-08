@@ -8,7 +8,7 @@ import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog } from '@/components/ui/dialog'
 import { EmptyState } from '@/components/ui/empty-state'
@@ -262,7 +262,6 @@ export function KeysPage({ tokens }: KeysPageProps) {
         <CardHeader className='flex flex-col gap-3 md:flex-row md:items-start md:justify-between'>
           <div>
             <CardTitle>令牌列表</CardTitle>
-            <CardDescription>支持查看、启停和删除。V1 不做批量操作。</CardDescription>
           </div>
           <Button size='sm' onClick={openCreateDialog}>新增令牌</Button>
         </CardHeader>

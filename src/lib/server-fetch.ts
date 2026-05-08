@@ -132,8 +132,8 @@ export async function getSubscriptionSelf() {
 export const getSubscriptionPlans = cache(async () => {
   const url = buildNewApiUrl('/api/subscription/plans')
   const response = await fetch(url, {
-    headers: await createNewApiHeaders(),
-    next: { revalidate: 300 },
+    headers: await createNewApiHeaders(undefined, '/api/subscription/plans'),
+    cache: 'no-store',
   })
   return parseJson<ApiResponse<Array<{ plan: SubscriptionPlan }>>>(response)
 })
