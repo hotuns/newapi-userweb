@@ -65,11 +65,24 @@ export function SiteHeader({ authenticated = false }: SiteHeaderProps) {
         </nav>
 
         <div className='flex items-center gap-3'>
-          <Link href={authenticated ? '/dashboard' : '/login'}>
-            <Button variant={authenticated ? 'secondary' : 'primary'} size='sm'>
-              控制台
-            </Button>
-          </Link>
+          {authenticated ? (
+            <>
+              <Link href='/chat'>
+                <Button size='sm'>使用AI</Button>
+              </Link>
+              <Link href='/dashboard'>
+                <Button variant='secondary' size='sm'>
+                  控制台
+                </Button>
+              </Link>
+            </>
+          ) : (
+            <Link href='/login'>
+              <Button variant='primary' size='sm'>
+                控制台
+              </Button>
+            </Link>
+          )}
         </div>
       </div>
     </header>

@@ -2,10 +2,22 @@
 
 import Image from 'next/image'
 import Link from 'next/link'
-import { Fragment, useSyncExternalStore, type ComponentType } from 'react'
+import { useRouter } from 'next/navigation'
+import { AnimatePresence, m } from 'motion/react'
+import { Fragment, useCallback, useMemo, useSyncExternalStore, type ComponentType } from 'react'
 import { useEffect, useDeferredValue, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import { Joyride, STATUS, type EventData, type Step } from 'react-joyride'
 import ReactMarkdown from 'react-markdown'
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
 import remarkGfm from 'remark-gfm'
 import {
   Activity,
@@ -14,6 +26,7 @@ import {
   ChevronDown,
   Copy,
   ExternalLink,
+  HelpCircle,
   House,
   KeyRound,
   Megaphone,
@@ -24,6 +37,7 @@ import { BillingPage } from '@/features/billing/components/billing-page'
 import { KeysPage } from '@/features/keys/components/keys-page'
 import { ProfileSettingsForm } from '@/features/settings/components/profile-settings-form'
 import { SecuritySettingsForm } from '@/features/settings/components/security-settings-form'
+import { InteractiveSurface, Reveal, StaggerGroup, StaggerItem } from '@/components/motion/primitives'
 import { UserMenu } from '@/components/shell/user-menu'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
@@ -34,7 +48,8 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { Table, TableBody, TableHead, TableWrapper, Td, Th } from '@/components/ui/table'
-import { buildGenericChatLaunchUrl, parseGenericChatTemplates } from '@/lib/chat-links'
+import { parseGenericChatTemplates } from '@/lib/chat-links'
+import { saveStoredEmbeddedChatSession } from '@/lib/embedded-chat-session'
 import { buildQueryString, cn, formatDateTime, formatNumber } from '@/lib/utils'
 import type {
   Announcement,
@@ -48,10 +63,13 @@ import type {
   TopupInfo,
   TopupRecord,
   UsageLog,
+  UsageTrendBucket,
+  UsageTrendResponse,
   UserProfile,
 } from '@/types/api'
 
-type RangeKey = 'today' | '3d' | '7d'
+type TrendRangeKey = 'today' | '7d' | '30d'
+type LogRangeKey = 'today' | '3d' | '7d'
 
 type DashboardOverviewProps = {
   status: ApiResponse<SystemStatus>
@@ -62,8 +80,6 @@ type DashboardOverviewProps = {
   subscription: ApiResponse<SubscriptionSummary>
   subscriptionPlans: ApiResponse<Array<{ plan: SubscriptionPlan }>>
   trendToday: ApiResponse<QuotaDataPoint[]>
-  trendThreeDays: ApiResponse<QuotaDataPoint[]>
-  trendSevenDays: ApiResponse<QuotaDataPoint[]>
   initialLogs: PaginatedResponse<UsageLog>
   topupInfo: ApiResponse<TopupInfo>
   topupRecords: PaginatedResponse<TopupRecord>
@@ -71,12 +87,19 @@ type DashboardOverviewProps = {
   renderedAtMs: number
 }
 
-type ChartBucket = {
-  timestamp: number
-  label: string
+type UsageSummary = {
   quota: number
   tokenUsed: number
   count: number
+}
+
+type UsageTrendPoint = {
+  timestamp: number
+  tooltipLabel: string
+  quota: number
+  tokenUsed: number
+  count: number
+  chartQuota: number
 }
 
 type NoticeItem = {
@@ -94,17 +117,75 @@ type NotificationReadState = {
   announcementKeys: string[]
 }
 
-const RANGE_OPTIONS: Array<{ key: RangeKey; label: string; days: number }> = [
+const TREND_RANGE_OPTIONS: Array<{ key: TrendRangeKey; label: string; days: number }> = [
+  { key: 'today', label: '今日', days: 1 },
+  { key: '7d', label: '七天', days: 7 },
+  { key: '30d', label: '三十天', days: 30 },
+]
+const LOG_RANGE_OPTIONS: Array<{ key: LogRangeKey; label: string; days: number }> = [
   { key: 'today', label: '今日', days: 1 },
   { key: '3d', label: '三天', days: 3 },
   { key: '7d', label: '七天', days: 7 },
 ]
+const PAGE_SIZE_OPTIONS = [10, 20, 50, 100]
 
 const NOTIFICATION_READ_STORAGE_KEY = 'newapi-userweb.notification-read-state'
 const NOTIFICATION_READ_STORAGE_EVENT = 'newapi-userweb:notification-read-state'
 const DEFAULT_NOTIFICATION_READ_STATE: NotificationReadState = { announcementKeys: [] }
 const DEFAULT_NOTIFICATION_READ_STATE_SNAPSHOT = JSON.stringify(DEFAULT_NOTIFICATION_READ_STATE)
 const SERVER_NOTIFICATION_READ_STATE_SNAPSHOT = `server:${DEFAULT_NOTIFICATION_READ_STATE_SNAPSHOT}`
+const EMPTY_DASHBOARD_TOKENS: TokenRecord[] = []
+const EMPTY_TREND_POINTS: UsageTrendBucket[] = []
+const DASHBOARD_TOUR_STEPS: Step[] = [
+  {
+    target: '[data-tour="dashboard-guide-button"]',
+    title: '控制台导览',
+    content: '点击这里可以随时重新打开交互式引导，快速熟悉控制台的主要功能。',
+    placement: 'bottom',
+  },
+  {
+    target: '[data-tour="dashboard-notifications"]',
+    title: '通知与公告',
+    content: '这里会显示系统通知和公告的未读数量。打开弹窗后可以统一查看并标记已读。',
+    placement: 'bottom',
+  },
+  {
+    target: '[data-tour="dashboard-chat-entry"]',
+    title: '聊天工具',
+    content: '这里可以直接进入独立的聊天工具页。若还没有令牌，点击后会提醒你先创建一个。',
+    placement: 'bottom',
+  },
+  {
+    target: '[data-tour="usage-trend"]',
+    title: '用量趋势',
+    content: '这里汇总最近请求的用量走势、今日花费、剩余额度和订阅重置时间。',
+    placement: 'bottom',
+  },
+  {
+    target: '[data-tour="range-selector"]',
+    title: '切换统计范围',
+    content: '在今日、七天和三十天之间切换，快速查看不同时间窗口的消耗走势。',
+    placement: 'left',
+  },
+  {
+    target: '[data-tour="billing-summary"]',
+    title: '余额与订阅',
+    content: '这里展示账户余额、订阅剩余额度和当前订阅周期。需要充值或查看账单时从这里进入。',
+    placement: 'left',
+  },
+  {
+    target: '[data-tour="token-management"]',
+    title: '令牌管理',
+    content: '这里展示默认令牌，支持复制完整密钥，并进入完整令牌管理页面。聊天工具入口放在顶部导航条。',
+    placement: 'left',
+  },
+  {
+    target: '[data-tour="usage-logs"]',
+    title: '用量明细',
+    content: '这里可以按时间、令牌、模型和 Request ID 筛选请求日志，点击行可展开查看详情。',
+    placement: 'top',
+  },
+]
 
 function hashString(input: string): string {
   let hash = 0
@@ -383,7 +464,7 @@ function MarkdownNotice({ content }: { content: string }) {
   )
 }
 
-function getRangeWindow(range: RangeKey) {
+function getLogRangeWindow(range: LogRangeKey) {
   const now = new Date()
   const end = Math.floor(now.getTime() / 1000)
   const start = new Date(now)
@@ -403,11 +484,31 @@ function getRangeWindow(range: RangeKey) {
   }
 }
 
-function toHourBucket(timestamp: number) {
-  return timestamp - (timestamp % 3600)
+function getTrendRangeWindow(range: TrendRangeKey) {
+  const now = new Date()
+  const end = Math.floor(now.getTime() / 1000)
+  const start = new Date(now)
+  start.setHours(0, 0, 0, 0)
+  let bucketSize: 3600 | 86400 = 3600
+
+  if (range === '7d') {
+    start.setDate(start.getDate() - 6)
+    bucketSize = 86400
+  }
+
+  if (range === '30d') {
+    start.setDate(start.getDate() - 29)
+    bucketSize = 86400
+  }
+
+  return {
+    startTimestamp: Math.floor(start.getTime() / 1000),
+    endTimestamp: end,
+    bucketSize,
+  }
 }
 
-function formatChartLabel(timestamp: number, range: RangeKey) {
+function formatTrendAxisLabel(timestamp: number, range: TrendRangeKey) {
   const date = new Date(timestamp * 1000)
 
   if (range === 'today') {
@@ -417,68 +518,91 @@ function formatChartLabel(timestamp: number, range: RangeKey) {
     }).format(date)
   }
 
-  if (range === '3d') {
-    return new Intl.DateTimeFormat('zh-CN', {
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-    }).format(date)
-  }
-
   return new Intl.DateTimeFormat('zh-CN', {
     month: '2-digit',
     day: '2-digit',
   }).format(date)
 }
 
-function buildChartBuckets(points: QuotaDataPoint[] | undefined, range: RangeKey) {
-  const lookup = new Map<number, ChartBucket>()
+function formatTrendTooltipLabel(timestamp: number, range: TrendRangeKey) {
+  const date = new Date(timestamp * 1000)
 
-  for (const point of points ?? []) {
-    const bucketTime = toHourBucket(point.created_at)
-    const current = lookup.get(bucketTime) ?? {
-      timestamp: bucketTime,
-      label: formatChartLabel(bucketTime, range),
-      quota: 0,
-      tokenUsed: 0,
-      count: 0,
-    }
-
-    current.quota += Number(point.quota ?? 0)
-    current.tokenUsed += Number(point.token_used ?? 0)
-    current.count += Number(point.count ?? 0)
-    lookup.set(bucketTime, current)
+  if (range === 'today') {
+    return new Intl.DateTimeFormat('zh-CN', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(date)
   }
 
-  const { startTimestamp, endTimestamp } = getRangeWindow(range)
-  const startHour = toHourBucket(startTimestamp)
-  const endHour = toHourBucket(endTimestamp)
-  const buckets: ChartBucket[] = []
-
-  for (let cursor = startHour; cursor <= endHour; cursor += 3600) {
-    buckets.push(
-      lookup.get(cursor) ?? {
-        timestamp: cursor,
-        label: formatChartLabel(cursor, range),
-        quota: 0,
-        tokenUsed: 0,
-        count: 0,
-      }
-    )
-  }
-
-  return buckets
+  return new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date)
 }
 
-function sumBuckets(buckets: ChartBucket[]) {
-  return buckets.reduce(
-    (total, bucket) => ({
-      quota: total.quota + bucket.quota,
-      tokenUsed: total.tokenUsed + bucket.tokenUsed,
-      count: total.count + bucket.count,
+function sumQuotaDataPoints(points: QuotaDataPoint[] | undefined): UsageSummary {
+  return (points ?? []).reduce(
+    (total, point) => ({
+      quota: total.quota + Number(point.quota ?? 0),
+      tokenUsed: total.tokenUsed + Number(point.token_used ?? 0),
+      count: total.count + Number(point.count ?? 0),
     }),
     { quota: 0, tokenUsed: 0, count: 0 }
   )
+}
+
+function buildUsageTrendPoints(points: UsageTrendBucket[] | undefined, range: TrendRangeKey) {
+  const sortedPoints = [...(points ?? [])].sort((left, right) => {
+    return left.timestamp - right.timestamp
+  })
+  const chartMax = Math.max(...sortedPoints.map((point) => Number(point.quota ?? 0)), 0)
+
+  return sortedPoints.map<UsageTrendPoint>((point) => {
+    const timestamp = Number(point.timestamp ?? 0)
+    const quota = Number(point.quota ?? 0)
+
+    return {
+      timestamp,
+      tooltipLabel: formatTrendTooltipLabel(timestamp, range),
+      quota,
+      tokenUsed: Number(point.token_used ?? 0),
+      count: Number(point.count ?? 0),
+      chartQuota: chartMax > 0 ? quota : 0.5,
+    }
+  })
+}
+
+function getTrendAxisTicks(points: UsageTrendBucket[] | undefined, range: TrendRangeKey) {
+  const sortedPoints = [...(points ?? [])].sort((left, right) => left.timestamp - right.timestamp)
+  if (!sortedPoints.length) {
+    return []
+  }
+
+  if (range === 'today') {
+    const startTimestamp = sortedPoints[0].timestamp
+    return Array.from({ length: 24 }, (_, index) => startTimestamp + index * 3600)
+  }
+
+  return sortedPoints.map((point) => point.timestamp)
+}
+
+function getTrendChartDomain(points: UsageTrendBucket[] | undefined, range: TrendRangeKey) {
+  const sortedPoints = [...(points ?? [])].sort((left, right) => left.timestamp - right.timestamp)
+  if (!sortedPoints.length) {
+    return [0, 1] as const
+  }
+
+  const startTimestamp = sortedPoints[0].timestamp
+  const endTimestamp =
+    range === 'today'
+      ? startTimestamp + 23 * 3600
+      : sortedPoints[sortedPoints.length - 1].timestamp
+
+  return [startTimestamp, endTimestamp] as const
 }
 
 function formatQuotaValue(value: number, status?: SystemStatus) {
@@ -494,6 +618,37 @@ function formatQuotaValue(value: number, status?: SystemStatus) {
 
   if (displayType === 'TOKENS') {
     return formatNumber(value)
+  }
+
+  const amountUSD = value / quotaPerUnit
+
+  if (displayType === 'CNY') {
+    return `¥${formatCurrency(amountUSD * usdRate)}`
+  }
+
+  if (displayType === 'CUSTOM') {
+    return `${customSymbol}${formatCurrency(amountUSD * customRate)}`
+  }
+
+  return `$${formatCurrency(amountUSD)}`
+}
+
+function formatTrendYAxisValue(value: number, status?: SystemStatus) {
+  const displayType = status?.quota_display_type ?? 'TOKENS'
+  const quotaPerUnit = Number(status?.quota_per_unit ?? 500000)
+  const usdRate = Number(status?.usd_exchange_rate ?? 1)
+  const customRate = Number(status?.custom_currency_exchange_rate ?? 1)
+  const customSymbol = status?.custom_currency_symbol?.trim() || '¤'
+
+  if (!Number.isFinite(value)) {
+    return '-'
+  }
+
+  if (displayType === 'TOKENS') {
+    return new Intl.NumberFormat('zh-CN', {
+      notation: 'compact',
+      maximumFractionDigits: value >= 1000 ? 1 : 0,
+    }).format(value)
   }
 
   const amountUSD = value / quotaPerUnit
@@ -587,32 +742,6 @@ function getTokenStatusLabel(status: number) {
   return '已过期'
 }
 
-function buildUsagePath(points: number[], width: number, height: number) {
-  if (!points.length) {
-    return ''
-  }
-
-  const maxValue = Math.max(...points, 1)
-  const stepX = points.length === 1 ? width : width / (points.length - 1)
-
-  return points
-    .map((point, index) => {
-      const x = index * stepX
-      const y = height - (point / maxValue) * height
-      return `${index === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`
-    })
-    .join(' ')
-}
-
-function buildUsageArea(points: number[], width: number, height: number) {
-  const linePath = buildUsagePath(points, width, height)
-  if (!linePath) {
-    return ''
-  }
-
-  return `${linePath} L ${width} ${height} L 0 ${height} Z`
-}
-
 async function fetchJson<T>(url: string, init?: RequestInit) {
   const response = await fetch(url, init)
   const json = (await response.json()) as T & {
@@ -644,92 +773,122 @@ async function copyText(text: string) {
 }
 
 function UsageTrendChart({
-  buckets,
+  points,
   status,
+  range,
 }: {
-  buckets: ChartBucket[]
+  points: UsageTrendBucket[] | undefined
   status?: SystemStatus
+  range: TrendRangeKey
 }) {
-  const values = buckets.map((bucket) => bucket.quota)
-  const linePath = buildUsagePath(values, 1000, 260)
-  const areaPath = buildUsageArea(values, 1000, 260)
-  const peak = Math.max(...values, 0)
-  const total = sumBuckets(buckets)
-  const labelIndexes = Array.from(
-    new Set([0, Math.floor((buckets.length - 1) / 2), buckets.length - 1])
-  ).filter((index) => index >= 0 && index < buckets.length)
+  const chartData = buildUsageTrendPoints(points, range)
+  const chartMax = Math.max(...chartData.map((point) => point.quota), 0)
+  const axisTicks = getTrendAxisTicks(points, range)
+  const chartDomain = getTrendChartDomain(points, range)
+  const todayAxis = range === 'today'
 
   return (
     <div className='space-y-4'>
       <div className='relative overflow-hidden rounded-[var(--radius-xl)] border border-[var(--border)] bg-[linear-gradient(180deg,#fbfdfd,#f1f7f5)] px-4 py-5'>
         <div className='pointer-events-none absolute inset-x-0 top-0 h-24 bg-[radial-gradient(circle_at_top,rgba(16,163,127,0.10),transparent_68%)]' />
-        <svg
-          viewBox='0 0 1000 320'
-          className='relative z-10 h-64 w-full'
-          preserveAspectRatio='none'
-        >
-          <defs>
-            <linearGradient id='usage-area' x1='0' x2='0' y1='0' y2='1'>
-              <stop offset='0%' stopColor='rgba(16,163,127,0.18)' />
-              <stop offset='100%' stopColor='rgba(16,163,127,0.02)' />
-            </linearGradient>
-          </defs>
-          {[0.25, 0.5, 0.75, 1].map((ratio) => (
-            <line
-              key={ratio}
-              x1='0'
-              x2='1000'
-              y1={260 - 260 * ratio}
-              y2={260 - 260 * ratio}
-              stroke='rgba(15,23,42,0.08)'
-              strokeDasharray='6 10'
-            />
-          ))}
-          {areaPath ? <path d={areaPath} fill='url(#usage-area)' /> : null}
-          {linePath ? (
-            <path
-              d={linePath}
-              fill='none'
-              stroke='rgba(11,140,107,0.92)'
-              strokeWidth='4'
-              strokeLinecap='round'
-              strokeLinejoin='round'
-            />
-          ) : null}
-        </svg>
-        <div className='relative z-10 mt-3 flex items-center justify-between text-xs text-[var(--muted)]'>
-          {labelIndexes.map((index) => (
-            <span key={`${buckets[index]?.timestamp ?? index}-${index}`}>
-              {buckets[index]?.label ?? '-'}
-            </span>
-          ))}
-        </div>
-      </div>
+        <div className='relative z-10 h-64'>
+          <ResponsiveContainer width='100%' height='100%'>
+            <AreaChart
+              data={chartData}
+              margin={{ top: 8, right: 6, bottom: 12, left: 12 }}
+            >
+              <defs>
+                <linearGradient id='usage-area' x1='0' x2='0' y1='0' y2='1'>
+                  <stop offset='0%' stopColor='rgba(16,163,127,0.22)' />
+                  <stop offset='100%' stopColor='rgba(16,163,127,0.04)' />
+                </linearGradient>
+              </defs>
+              <CartesianGrid
+                vertical={false}
+                stroke='rgba(15,23,42,0.08)'
+                strokeDasharray='6 10'
+              />
+              <XAxis
+                dataKey='timestamp'
+                type='number'
+                domain={chartDomain}
+                ticks={axisTicks}
+                axisLine={false}
+                tickLine={false}
+                interval={todayAxis ? 0 : 'preserveStartEnd'}
+                minTickGap={todayAxis ? 8 : 24}
+                height={todayAxis ? 64 : 56}
+                tickFormatter={(value) => formatTrendAxisLabel(Number(value), range)}
+                tick={{
+                  fill: 'var(--muted)',
+                  fontSize: todayAxis ? 10 : 12,
+                  angle: todayAxis ? -45 : -20,
+                  textAnchor: 'end',
+                }}
+              />
+              <YAxis
+                domain={chartMax > 0 ? [0, 'dataMax'] : [0, 1]}
+                axisLine={false}
+                tickLine={false}
+                tickMargin={10}
+                width={64}
+                tick={{
+                  fill: 'var(--muted)',
+                  fontSize: 12,
+                }}
+                tickFormatter={(value) => formatTrendYAxisValue(Number(value), status)}
+              />
+              <Tooltip
+                cursor={{
+                  stroke: 'rgba(11,140,107,0.18)',
+                  strokeWidth: 18,
+                }}
+                content={({ active, payload }) => {
+                  if (!active || !payload?.length) {
+                    return null
+                  }
 
-      <div className='grid gap-3 sm:grid-cols-3'>
-        <div className='rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--surface-strong)] p-4'>
-          <p className='text-xs uppercase tracking-[0.18em] text-[var(--muted)]'>
-            区间消耗
-          </p>
-          <p className='mt-2 text-xl font-semibold text-[var(--foreground)]'>
-            {formatQuotaValue(total.quota, status)}
-          </p>
-        </div>
-        <div className='rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--surface-strong)] p-4'>
-          <p className='text-xs uppercase tracking-[0.18em] text-[var(--muted)]'>
-            区间请求
-          </p>
-          <p className='mt-2 text-xl font-semibold text-[var(--foreground)]'>
-            {formatNumber(total.count)}
-          </p>
-        </div>
-        <div className='rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--surface-strong)] p-4'>
-          <p className='text-xs uppercase tracking-[0.18em] text-[var(--muted)]'>
-            峰值小时
-          </p>
-          <p className='mt-2 text-xl font-semibold text-[var(--foreground)]'>
-            {formatQuotaValue(peak, status)}
-          </p>
+                  const point = payload[0]?.payload as UsageTrendPoint | undefined
+                  if (!point) {
+                    return null
+                  }
+
+                  return (
+                    <div className='rounded-[var(--radius-lg)] border border-[rgba(15,23,42,0.08)] bg-white/95 px-3 py-2.5 shadow-[0_20px_50px_rgba(15,23,42,0.14)] backdrop-blur'>
+                      <p className='text-xs font-medium text-[var(--muted)]'>
+                        {point.tooltipLabel}
+                      </p>
+                      <div className='mt-2 space-y-1.5'>
+                        <p className='text-sm font-semibold text-[var(--foreground)]'>
+                          消耗 {formatQuotaValue(point.quota, status)}
+                        </p>
+                        <p className='text-xs text-[var(--muted-strong)]'>
+                          请求 {formatNumber(point.count)}
+                        </p>
+                        <p className='text-xs text-[var(--muted-strong)]'>
+                          Tokens {formatNumber(point.tokenUsed)}
+                        </p>
+                      </div>
+                    </div>
+                  )
+                }}
+              />
+              <Area
+                type='monotone'
+                dataKey='chartQuota'
+                stroke='rgba(11,140,107,0.92)'
+                strokeWidth={3}
+                fill='url(#usage-area)'
+                activeDot={{
+                  r: 5,
+                  fill: '#0b8c6b',
+                  stroke: 'white',
+                  strokeWidth: 2,
+                }}
+                isAnimationActive={false}
+              />
+            </AreaChart>
+          </ResponsiveContainer>
         </div>
       </div>
     </div>
@@ -745,14 +904,13 @@ export function DashboardOverview({
   subscription,
   subscriptionPlans,
   trendToday,
-  trendThreeDays,
-  trendSevenDays,
   initialLogs,
   topupInfo,
   topupRecords,
   apiBaseUrl,
   renderedAtMs,
 }: DashboardOverviewProps) {
+  const router = useRouter()
   const systemStatus = status.data
   const user = profile.data
   const userModelList = userModels.data ?? []
@@ -763,22 +921,24 @@ export function DashboardOverview({
   const activePlan =
     activeSubscription?.plan ??
     planList.find((item) => item.plan.id === activeSubscription?.subscription?.plan_id)?.plan
-  const todayBuckets = buildChartBuckets(trendToday.data, 'today')
-  const threeDayBuckets = buildChartBuckets(trendThreeDays.data, '3d')
-  const sevenDayBuckets = buildChartBuckets(trendSevenDays.data, '7d')
-  const todaySummary = sumBuckets(todayBuckets)
-  const dashboardTokens = tokens.data?.items ?? []
-  const genericChatTemplates = parseGenericChatTemplates(systemStatus?.chats)
+  const todaySummary = sumQuotaDataPoints(trendToday.data)
+  const dashboardTokens = tokens.data?.items ?? EMPTY_DASHBOARD_TOKENS
+  const genericChatTemplates = useMemo(
+    () => parseGenericChatTemplates(systemStatus?.chats),
+    [systemStatus?.chats]
+  )
   const noticeText = notice.data?.trim() ?? ''
   const noticeItem = buildNoticeItem(noticeText)
   const announcementItems = buildAnnouncementItems(systemStatus?.announcements)
   const noticeItems = noticeItem ? [noticeItem, ...announcementItems] : announcementItems
 
-  const [range, setRange] = useState<RangeKey>('today')
+  const [trendRange, setTrendRange] = useState<TrendRangeKey>('today')
+  const [logRange, setLogRange] = useState<LogRangeKey>('today')
   const [modelFilter, setModelFilter] = useState('')
   const [tokenFilter, setTokenFilter] = useState('')
   const [requestIdFilter, setRequestIdFilter] = useState('')
   const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
   const [selectedChatTemplateName, setSelectedChatTemplateName] = useState('')
   const [revealedKeys, setRevealedKeys] = useState<Record<number, string>>({})
   const [loadingTokenId, setLoadingTokenId] = useState<number | null>(null)
@@ -791,6 +951,7 @@ export function DashboardOverview({
   const [profileOpen, setProfileOpen] = useState(false)
   const [securityOpen, setSecurityOpen] = useState(false)
   const [noticeOpen, setNoticeOpen] = useState(false)
+  const [dashboardTourRun, setDashboardTourRun] = useState(false)
   const [expandedLogIds, setExpandedLogIds] = useState<Record<number, boolean>>({})
   const [nowMs, setNowMs] = useState(renderedAtMs)
 
@@ -850,13 +1011,6 @@ export function DashboardOverview({
   const activeChatTemplate =
     genericChatTemplates.find((template) => template.name === activeChatTemplateName) ?? null
 
-  const currentBuckets =
-    range === 'today'
-      ? todayBuckets
-      : range === '3d'
-        ? threeDayBuckets
-        : sevenDayBuckets
-
   const resetTarget = getResetTarget(subscription.data, nowMs)
   const remainingPackageQuota = Math.max(
     0,
@@ -864,12 +1018,12 @@ export function DashboardOverview({
       Number(activeSubscription?.subscription?.amount_used ?? 0)
   )
 
-  const rangeWindow = getRangeWindow(range)
+  const logRangeWindow = getLogRangeWindow(logRange)
   const logQuery = buildQueryString({
     p: page,
-    page_size: 10,
-    start_timestamp: rangeWindow.startTimestamp,
-    end_timestamp: rangeWindow.endTimestamp,
+    page_size: pageSize,
+    start_timestamp: logRangeWindow.startTimestamp,
+    end_timestamp: logRangeWindow.endTimestamp,
     model_name: deferredModelFilter,
     token_name: deferredTokenFilter,
     request_id: deferredRequestIdFilter,
@@ -878,8 +1032,9 @@ export function DashboardOverview({
   const logsQuery = useQuery({
     queryKey: [
       'dashboard-logs',
-      range,
+      logRange,
       page,
+      pageSize,
       deferredModelFilter,
       deferredTokenFilter,
       deferredRequestIdFilter,
@@ -887,10 +1042,40 @@ export function DashboardOverview({
     queryFn: () =>
       fetchJson<PaginatedResponse<UsageLog>>(`/api/newapi/log/self?${logQuery}`),
     placeholderData: keepPreviousData,
-    initialData: range === 'today' && page === 1 ? initialLogs : undefined,
+    initialData:
+      logRange === 'today' &&
+      page === 1 &&
+      pageSize === 10 &&
+      !deferredModelFilter &&
+      !deferredTokenFilter &&
+      !deferredRequestIdFilter
+        ? initialLogs
+        : undefined,
   })
+  const trendRangeWindow = getTrendRangeWindow(trendRange)
+  const trendLogQuery = buildQueryString({
+    start_timestamp: trendRangeWindow.startTimestamp,
+    end_timestamp: trendRangeWindow.endTimestamp,
+    bucket_size: trendRangeWindow.bucketSize,
+    model_name: deferredModelFilter,
+    token_name: deferredTokenFilter,
+    request_id: deferredRequestIdFilter,
+  })
+  const trendQuery = useQuery({
+    queryKey: [
+      'dashboard-usage-trend',
+      trendRange,
+      deferredModelFilter,
+      deferredTokenFilter,
+      deferredRequestIdFilter,
+    ],
+    queryFn: () =>
+      fetchJson<UsageTrendResponse>(`/api/dashboard/usage-trend?${trendLogQuery}`),
+    placeholderData: keepPreviousData,
+  })
+  const currentTrendPoints = trendQuery.data?.data?.points ?? EMPTY_TREND_POINTS
 
-  async function loadFullTokenValue(tokenId: number) {
+  const loadFullTokenValue = useCallback(async (tokenId: number) => {
     if (revealedKeys[tokenId]) {
       return revealedKeys[tokenId]
     }
@@ -915,7 +1100,7 @@ export function DashboardOverview({
     } finally {
       setLoadingTokenId(null)
     }
-  }
+  }, [revealedKeys])
 
   async function handleCopyToken(token: TokenRecord) {
     try {
@@ -945,6 +1130,16 @@ export function DashboardOverview({
     setChatToolsOpen(true)
   }
 
+  function handleOpenTopChatEntry() {
+    if (!selectedToken) {
+      setKeysOpen(true)
+      toast.error('请先创建一个令牌，再打开聊天工具')
+      return
+    }
+
+    handleOpenToolSelector(selectedToken)
+  }
+
   async function handleOpenChatTemplate(token: TokenRecord) {
     if (!activeChatTemplate) {
       toast.error('当前没有可用的聊天工具模板')
@@ -957,12 +1152,11 @@ export function DashboardOverview({
         throw new Error('没有读取到完整令牌')
       }
 
-      const launchUrl = buildGenericChatLaunchUrl(
-        activeChatTemplate.template,
-        apiBaseUrl,
-        fullKey
-      )
-      window.open(launchUrl, '_blank', 'noopener,noreferrer')
+      setChatTargetToken(token)
+      setSelectedChatTemplateName(activeChatTemplate.name)
+      saveStoredEmbeddedChatSession({ name: activeChatTemplate.name, tokenId: token.id })
+      setChatToolsOpen(false)
+      router.push('/chat')
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '打开聊天工具失败')
     }
@@ -970,7 +1164,7 @@ export function DashboardOverview({
 
   const logs = logsQuery.data?.data?.items ?? []
   const totalLogs = logsQuery.data?.data?.total ?? 0
-  const totalPages = Math.max(1, Math.ceil(totalLogs / 10))
+  const totalPages = Math.max(1, Math.ceil(totalLogs / pageSize))
 
   function toggleLogExpanded(logId: number) {
     setExpandedLogIds((current) => ({
@@ -993,91 +1187,234 @@ export function DashboardOverview({
     setNoticeOpen(false)
   }
 
+  function handleStartDashboardTour() {
+    setNoticeOpen(false)
+    setChatToolsOpen(false)
+    setGuideOpen(false)
+    setKeysOpen(false)
+    setBillingOpen(false)
+    setProfileOpen(false)
+    setSecurityOpen(false)
+    setDashboardTourRun(false)
+
+    window.setTimeout(() => {
+      setDashboardTourRun(true)
+    }, 0)
+  }
+
+  function handleDashboardTourEvent(data: EventData) {
+    if (data.status === STATUS.FINISHED || data.status === STATUS.SKIPPED) {
+      setDashboardTourRun(false)
+    }
+  }
+
   return (
     <>
+      <Joyride
+        run={dashboardTourRun}
+        steps={DASHBOARD_TOUR_STEPS}
+        continuous
+        scrollToFirstStep
+        onEvent={handleDashboardTourEvent}
+        locale={{
+          back: '上一步',
+          close: '关闭',
+          last: '完成',
+          next: '下一步',
+          nextWithProgress: '下一步（{current}/{total}）',
+          open: '打开引导',
+          skip: '跳过',
+        }}
+        options={{
+          overlayColor: 'rgba(15,23,42,0.58)',
+          primaryColor: '#10a37f',
+          scrollOffset: 92,
+          showProgress: true,
+          skipBeacon: true,
+          spotlightRadius: 18,
+          textColor: '#1f2933',
+          width: 380,
+          zIndex: 80,
+        }}
+        styles={{
+          tooltip: {
+            borderRadius: 22,
+            boxShadow: '0 24px 80px rgba(15,23,42,0.28)',
+          },
+          tooltipTitle: {
+            color: '#111827',
+            fontSize: 18,
+            fontWeight: 700,
+          },
+          tooltipContent: {
+            color: '#52525b',
+            fontSize: 14,
+            lineHeight: 1.7,
+            padding: '10px 0 18px',
+          },
+          buttonPrimary: {
+            borderRadius: 999,
+            fontWeight: 700,
+          },
+          buttonBack: {
+            color: '#52525b',
+          },
+          buttonSkip: {
+            color: '#71717a',
+          },
+        }}
+      />
       <div className='space-y-6'>
-        <div className='rounded-[calc(var(--radius-xl)+0.25rem)] border border-[rgba(15,23,42,0.07)] bg-[rgba(255,255,255,0.78)] px-4 py-3 shadow-[0_18px_50px_rgba(15,23,42,0.06)] backdrop-blur-xl lg:px-5'>
-          <div className='flex items-center justify-between gap-4'>
-            <Link href='/' className='inline-flex min-w-0 items-center gap-3 text-[var(--foreground)]'>
-              <span className='flex size-10 items-center justify-center overflow-hidden rounded-2xl bg-[var(--surface)] ring-1 ring-[rgba(15,23,42,0.08)]'>
-                <Image
-                  src='/brand/moretoken-icon.png'
-                  alt='MoreToken'
-                  width={40}
-                  height={40}
-                  className='size-full object-cover'
-                  priority
-                />
-              </span>
-              <span className='truncate text-xl font-semibold tracking-[-0.04em]'>
-                MoreToken
-              </span>
-            </Link>
-
-            <div className='flex shrink-0 items-center gap-2.5'>
-              <HeaderIconLink href='/' label='首页' icon={House} />
-              <Button
-                variant='ghost'
-                size='sm'
-                aria-label='通知与公告'
-                title='通知与公告'
-                className='group relative size-10 rounded-full border border-[rgba(15,23,42,0.07)] bg-[rgba(255,255,255,0.68)] p-0 text-[var(--foreground)] shadow-none hover:border-[rgba(15,23,42,0.12)] hover:bg-white'
-                onClick={() => setNoticeOpen(true)}
+        <Reveal>
+          <div className='rounded-[calc(var(--radius-xl)+0.25rem)] border border-[rgba(15,23,42,0.07)] bg-[rgba(255,255,255,0.78)] px-4 py-3 shadow-[0_18px_50px_rgba(15,23,42,0.06)] backdrop-blur-xl lg:px-5'>
+            <div className='flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between'>
+              <Link
+                href='/'
+                className='inline-flex min-w-0 items-center gap-3 text-[var(--foreground)] sm:max-w-[calc(100%-12rem)]'
               >
-                <Bell className='size-4' />
-                {hasUnreadNotifications ? (
-                  <span className='absolute -right-1 -top-1 inline-flex min-w-5 items-center justify-center rounded-full bg-[var(--accent)] px-1.5 text-[11px] font-semibold leading-5 text-[var(--accent-foreground)]'>
-                    {unreadNotificationCount > 9 ? '9+' : unreadNotificationCount}
-                  </span>
-                ) : null}
-                <span className='pointer-events-none absolute left-1/2 top-full z-10 mt-2 -translate-x-1/2 rounded-full bg-[var(--foreground)] px-2.5 py-1 text-xs font-medium whitespace-nowrap text-[var(--background)] opacity-0 shadow-[0_10px_30px_rgba(15,23,42,0.18)] transition-opacity duration-150 group-hover:opacity-100'>
-                  通知与公告
+                <span className='flex size-10 items-center justify-center overflow-hidden rounded-2xl bg-[var(--surface)] ring-1 ring-[rgba(15,23,42,0.08)]'>
+                  <Image
+                    src='/brand/moretoken-icon.png'
+                    alt='MoreToken'
+                    width={40}
+                    height={40}
+                    className='size-full object-cover'
+                    priority
+                  />
                 </span>
-              </Button>
-              {user ? (
-                <UserMenu
-                  profile={user}
-                  onOpenProfile={() => setProfileOpen(true)}
-                  onOpenSecurity={() => setSecurityOpen(true)}
-                  onOpenBilling={() => setBillingOpen(true)}
-                  onOpenKeys={() => setKeysOpen(true)}
-                />
-              ) : null}
+                <span className='truncate text-xl font-semibold tracking-[-0.04em]'>
+                  MoreToken
+                </span>
+              </Link>
+
+              <div className='flex w-full shrink-0 flex-wrap items-center justify-end gap-2 sm:w-auto sm:flex-nowrap'>
+                <Button
+                  size='sm'
+                  data-tour='dashboard-chat-entry'
+                  className='w-full shadow-[0_18px_42px_rgba(16,163,127,0.22)] sm:w-auto'
+                  onClick={handleOpenTopChatEntry}
+                >
+                  <ExternalLink className='mr-2 size-4' />
+                  {selectedToken ? '使用AI' : '创建令牌后使用'}
+                </Button>
+                <HeaderIconLink href='/' label='首页' icon={House} />
+                <Button
+                  variant='ghost'
+                  size='sm'
+                  aria-label='开始引导'
+                  title='开始引导'
+                  data-tour='dashboard-guide-button'
+                  className='group relative size-10 rounded-full border border-[rgba(15,23,42,0.07)] bg-[rgba(255,255,255,0.68)] p-0 text-[var(--foreground)] shadow-none hover:border-[rgba(15,23,42,0.12)] hover:bg-white'
+                  onClick={handleStartDashboardTour}
+                >
+                  <HelpCircle className='size-4' />
+                  <span className='pointer-events-none absolute left-1/2 top-full z-10 mt-2 -translate-x-1/2 rounded-full bg-[var(--foreground)] px-2.5 py-1 text-xs font-medium whitespace-nowrap text-[var(--background)] opacity-0 shadow-[0_10px_30px_rgba(15,23,42,0.18)] transition-opacity duration-150 group-hover:opacity-100'>
+                    开始引导
+                  </span>
+                </Button>
+                <Button
+                  variant='ghost'
+                  size='sm'
+                  aria-label='通知与公告'
+                  title='通知与公告'
+                  data-tour='dashboard-notifications'
+                  className='group relative size-10 rounded-full border border-[rgba(15,23,42,0.07)] bg-[rgba(255,255,255,0.68)] p-0 text-[var(--foreground)] shadow-none hover:border-[rgba(15,23,42,0.12)] hover:bg-white'
+                  onClick={() => setNoticeOpen(true)}
+                >
+                  <Bell className='size-4' />
+                  {hasUnreadNotifications ? (
+                    <span className='absolute -right-1 -top-1 inline-flex min-w-5 items-center justify-center rounded-full bg-[var(--accent)] px-1.5 text-[11px] font-semibold leading-5 text-[var(--accent-foreground)]'>
+                      {unreadNotificationCount > 9 ? '9+' : unreadNotificationCount}
+                    </span>
+                  ) : null}
+                  <span className='pointer-events-none absolute left-1/2 top-full z-10 mt-2 -translate-x-1/2 rounded-full bg-[var(--foreground)] px-2.5 py-1 text-xs font-medium whitespace-nowrap text-[var(--background)] opacity-0 shadow-[0_10px_30px_rgba(15,23,42,0.18)] transition-opacity duration-150 group-hover:opacity-100'>
+                    通知与公告
+                  </span>
+                </Button>
+                {user ? (
+                  <UserMenu
+                    profile={user}
+                    onOpenProfile={() => setProfileOpen(true)}
+                    onOpenSecurity={() => setSecurityOpen(true)}
+                    onOpenBilling={() => setBillingOpen(true)}
+                    onOpenKeys={() => setKeysOpen(true)}
+                  />
+                ) : null}
+              </div>
             </div>
           </div>
-        </div>
+        </Reveal>
 
-        <div className='grid gap-6 xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,0.95fr)]'>
-          <Card className='bg-[rgba(255,255,255,0.92)]'>
+        <>
+        <StaggerGroup
+          className='grid gap-6 xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,0.95fr)]'
+          staggerChildren={0.08}
+        >
+          <StaggerItem>
+            <InteractiveSurface className='h-full' hoverY={-3}>
+              <Card className='h-full bg-[rgba(255,255,255,0.92)]' data-tour='usage-trend'>
             <CardHeader className='gap-4 pb-5'>
               <div className='flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between'>
                 <div>
                   <CardTitle className='mt-2 text-3xl text-[var(--foreground)]'>用量趋势</CardTitle>
                 </div>
 
-                <div className='inline-flex rounded-full border border-[var(--border)] bg-[var(--surface-strong)] p-1'>
-                  {RANGE_OPTIONS.map((item) => (
-                    <button
+                <div
+                  className='grid w-full grid-cols-3 rounded-full border border-[var(--border)] bg-[var(--surface-strong)] p-1 sm:inline-flex sm:w-auto'
+                  data-tour='range-selector'
+                >
+                  {TREND_RANGE_OPTIONS.map((item) => (
+                    <m.button
                       key={item.key}
                       type='button'
-                      onClick={() => {
-                        setRange(item.key)
-                        setPage(1)
-                      }}
+                      onClick={() => setTrendRange(item.key)}
+                      whileTap={{ scale: 0.98 }}
                       className={cn(
-                        'rounded-full px-4 py-2 text-sm font-medium text-[var(--muted-strong)]',
-                        range === item.key &&
+                        'rounded-full px-3 py-2 text-sm font-medium text-[var(--muted-strong)] sm:px-4',
+                        trendRange === item.key &&
                           'bg-[var(--surface)] text-[var(--foreground)] shadow-[var(--shadow-card)]'
                       )}
                     >
                       {item.label}
-                    </button>
+                    </m.button>
                   ))}
                 </div>
               </div>
             </CardHeader>
-            <CardContent className='space-y-4 px-6 py-6'>
-              <UsageTrendChart buckets={currentBuckets} status={systemStatus} />
+            <CardContent className='space-y-4 px-4 py-5 sm:px-6 sm:py-6'>
+              <AnimatePresence mode='wait' initial={false}>
+                <m.div
+                  key={`${trendRange}-${
+                    trendQuery.isError && !currentTrendPoints.length
+                      ? 'error'
+                      : trendQuery.isLoading && !currentTrendPoints.length
+                        ? 'loading'
+                        : 'ready'
+                  }`}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -4 }}
+                  transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                >
+                  {trendQuery.isError && !currentTrendPoints.length ? (
+                    <div className='rounded-[var(--radius-lg)] border border-dashed border-[var(--border)] p-6 text-sm text-[var(--danger)]'>
+                      {trendQuery.error instanceof Error
+                        ? trendQuery.error.message
+                        : '趋势图加载失败'}
+                    </div>
+                  ) : trendQuery.isLoading && !currentTrendPoints.length ? (
+                    <div className='rounded-[var(--radius-lg)] border border-dashed border-[var(--border)] p-6 text-sm text-[var(--muted)]'>
+                      正在加载趋势图...
+                    </div>
+                  ) : (
+                    <UsageTrendChart
+                      points={currentTrendPoints}
+                      status={systemStatus}
+                      range={trendRange}
+                    />
+                  )}
+                </m.div>
+              </AnimatePresence>
 
               <div className='grid gap-3 border-t border-[var(--border)] pt-4 md:grid-cols-3'>
                 <div className='rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--surface)] px-4 py-3.5'>
@@ -1100,24 +1437,37 @@ export function DashboardOverview({
                 </div>
               </div>
             </CardContent>
-          </Card>
+              </Card>
+            </InteractiveSurface>
+          </StaggerItem>
 
-          <div className='space-y-6'>
-            <Card className='overflow-hidden border-0 bg-[linear-gradient(145deg,#0f1720_0%,#12352b_42%,#10a37f_100%)] text-white shadow-[0_28px_80px_rgba(15,23,42,0.24)]'>
+          <StaggerItem>
+            <StaggerGroup className='space-y-6' staggerChildren={0.06} delayChildren={0.04}>
+            <StaggerItem>
+              <InteractiveSurface hoverY={-3}>
+                <Card
+                  className='overflow-hidden border-0 bg-[linear-gradient(145deg,#0f1720_0%,#12352b_42%,#10a37f_100%)] text-white shadow-[0_28px_80px_rgba(15,23,42,0.24)]'
+                  data-tour='billing-summary'
+                >
               <CardHeader className='border-b border-[rgba(255,255,255,0.08)]'>
-                <div className='flex items-start justify-between gap-4'>
+                <div className='flex flex-col items-start gap-3 sm:flex-row sm:items-start sm:justify-between'>
                   <div>
                     <CardTitle className='flex items-center gap-2 text-white'>
                       <Wallet className='size-5 text-[#bbf7d0]' />
                       余额与订阅
                     </CardTitle>
                   </div>
-                  <Button size='sm' variant='secondary' onClick={() => setBillingOpen(true)}>
+                  <Button
+                    size='sm'
+                    variant='secondary'
+                    className='w-full sm:w-auto'
+                    onClick={() => setBillingOpen(true)}
+                  >
                     充值
                   </Button>
                 </div>
               </CardHeader>
-              <CardContent className='space-y-4 px-6 py-6'>
+              <CardContent className='space-y-4 px-4 py-5 sm:px-6 sm:py-6'>
                 <div className='grid gap-4 sm:grid-cols-2'>
                   <div className='rounded-[var(--radius-lg)] border border-[rgba(255,255,255,0.10)] bg-[rgba(255,255,255,0.08)] p-4 backdrop-blur'>
                     <p className='text-sm text-[rgba(236,253,245,0.72)]'>账户余额</p>
@@ -1137,7 +1487,7 @@ export function DashboardOverview({
 
                 {activeSubscription ? (
                   <div className='rounded-[var(--radius-lg)] border border-[rgba(255,255,255,0.10)] bg-[rgba(255,255,255,0.08)] p-4 backdrop-blur'>
-                    <div className='flex items-start justify-between gap-4'>
+                    <div className='flex flex-col items-start gap-3 sm:flex-row sm:items-start sm:justify-between'>
                       <div>
                         <p className='text-lg font-semibold text-white'>
                           {activePlan?.title || `订阅 #${activeSubscription.subscription.plan_id}`}
@@ -1172,7 +1522,7 @@ export function DashboardOverview({
                         <p className='text-xs uppercase tracking-[0.18em] text-[rgba(236,253,245,0.68)]'>
                           有效期
                         </p>
-                        <p className='mt-2 text-base font-semibold text-white'>
+                        <p className='mt-2 break-words text-base font-semibold text-white'>
                           {formatDateTime(activeSubscription.subscription.start_time)} 至{' '}
                           {formatDateTime(activeSubscription.subscription.end_time)}
                         </p>
@@ -1185,18 +1535,30 @@ export function DashboardOverview({
                   </div>
                 )}
               </CardContent>
-            </Card>
+                </Card>
+              </InteractiveSurface>
+            </StaggerItem>
 
-            <Card className='border-[rgba(69,61,45,0.1)] bg-[rgba(255,253,247,0.92)]'>
+            <StaggerItem>
+              <InteractiveSurface hoverY={-3}>
+                <Card
+                  className='border-[rgba(69,61,45,0.1)] bg-[rgba(255,253,247,0.92)]'
+                  data-tour='token-management'
+                >
               <CardHeader>
-                <div className='flex items-start justify-between gap-4'>
+                <div className='flex flex-col items-start gap-3 sm:flex-row sm:items-start sm:justify-between'>
                   <div>
                     <CardTitle className='flex items-center gap-2'>
                       <KeyRound className='size-5 text-[var(--accent)]' />
                       令牌管理
                     </CardTitle>
                   </div>
-                  <Button size='sm' variant='secondary' onClick={() => setKeysOpen(true)}>
+                  <Button
+                    size='sm'
+                    variant='secondary'
+                    className='w-full sm:w-auto'
+                    onClick={() => setKeysOpen(true)}
+                  >
                     更多
                   </Button>
                 </div>
@@ -1205,8 +1567,8 @@ export function DashboardOverview({
                 {selectedToken ? (
                   <>
                     <div className='rounded-[var(--radius-lg)] bg-[var(--surface-strong)] p-4'>
-                      <div className='flex items-start justify-between gap-4'>
-                        <div>
+                      <div className='flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between'>
+                        <div className='min-w-0'>
                           <div className='flex items-center gap-2'>
                             <span
                               className={cn(
@@ -1220,18 +1582,19 @@ export function DashboardOverview({
                               aria-label={getTokenStatusLabel(selectedToken.status)}
                               title={getTokenStatusLabel(selectedToken.status)}
                             />
-                            <p className='text-lg font-semibold text-[var(--foreground)]'>
+                            <p className='min-w-0 break-all text-lg font-semibold text-[var(--foreground)]'>
                               {selectedToken.name}
                             </p>
                           </div>
-                          <p className='mt-2 font-mono text-xs text-[var(--muted-strong)]'>
+                          <p className='mt-2 break-all font-mono text-xs text-[var(--muted-strong)]'>
                             {selectedToken.key}
                           </p>
                         </div>
-                        <div className='flex items-center gap-2'>
+                        <div className='flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center'>
                           <Button
                             size='sm'
                             variant='secondary'
+                            className='w-full sm:w-auto'
                             onClick={() => void handleCopyToken(selectedToken)}
                             disabled={loadingTokenId === selectedToken.id}
                           >
@@ -1244,6 +1607,7 @@ export function DashboardOverview({
                           </Button>
                           <Button
                             size='sm'
+                            className='w-full sm:w-auto'
                             onClick={() => handleOpenToolSelector(selectedToken)}
                             disabled={loadingTokenId === selectedToken.id}
                           >
@@ -1260,11 +1624,18 @@ export function DashboardOverview({
                   />
                 )}
               </CardContent>
-            </Card>
-          </div>
-        </div>
+                </Card>
+              </InteractiveSurface>
+            </StaggerItem>
+            </StaggerGroup>
+          </StaggerItem>
+        </StaggerGroup>
 
-        <Card className='border-[rgba(69,61,45,0.1)] bg-[rgba(255,253,247,0.92)]'>
+        <Reveal inView>
+        <Card
+          className='border-[rgba(69,61,45,0.1)] bg-[rgba(255,253,247,0.92)]'
+          data-tour='usage-logs'
+        >
           <CardHeader className='gap-4'>
             <div className='flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between'>
               <div>
@@ -1275,15 +1646,15 @@ export function DashboardOverview({
               </div>
             </div>
 
-            <div className='grid gap-3 md:grid-cols-2 xl:grid-cols-[180px_180px_minmax(0,1fr)_auto]'>
+            <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-[180px_180px_minmax(0,1fr)_auto]'>
               <Select
-                value={range}
+                value={logRange}
                 onChange={(event) => {
-                  setRange(event.target.value as RangeKey)
+                  setLogRange(event.target.value as LogRangeKey)
                   setPage(1)
                 }}
               >
-                {RANGE_OPTIONS.map((item) => (
+                {LOG_RANGE_OPTIONS.map((item) => (
                   <option key={item.key} value={item.key}>
                     {item.label}
                   </option>
@@ -1362,9 +1733,10 @@ export function DashboardOverview({
 
                         return (
                           <Fragment key={`${log.id}-${log.request_id ?? log.created_at ?? 'row'}`}>
-                            <tr
+                            <m.tr
                               className='cursor-pointer transition-colors hover:bg-[var(--surface-strong)]'
                               onClick={() => toggleLogExpanded(log.id)}
+                              whileTap={{ opacity: 0.96 }}
                             >
                               <Td>
                                 <button
@@ -1400,12 +1772,21 @@ export function DashboardOverview({
                               </Td>
                               <Td>{formatQuotaValue(log.quota, systemStatus)}</Td>
                               <Td>{log.token_name || '-'}</Td>
-                            </tr>
-                            {isExpanded ? (
-                              <tr>
-                                <Td colSpan={6} className='bg-[var(--surface-strong)] px-5 py-3'>
-                                  <div className='grid gap-3 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]'>
-                                    <div className='grid grid-cols-2 gap-2 md:grid-cols-3'>
+                            </m.tr>
+                            <tr aria-hidden={!isExpanded}>
+                              <Td colSpan={6} className='border-t-0 p-0'>
+                                <AnimatePresence initial={false}>
+                                  {isExpanded ? (
+                                    <m.div
+                                      className='overflow-hidden'
+                                      initial={{ height: 0, opacity: 0 }}
+                                      animate={{ height: 'auto', opacity: 1 }}
+                                      exit={{ height: 0, opacity: 0 }}
+                                      transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+                                    >
+                                      <div className='bg-[var(--surface-strong)] px-5 py-3'>
+                                        <div className='grid gap-3 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]'>
+                                    <div className='grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-3'>
                                       {[
                                         ['日志 ID', formatNumber(log.id)],
                                         ['类型', formatNumber(log.type)],
@@ -1454,10 +1835,13 @@ export function DashboardOverview({
                                         </pre>
                                       </div>
                                     </div>
-                                  </div>
-                                </Td>
-                              </tr>
-                            ) : null}
+                                        </div>
+                                      </div>
+                                    </m.div>
+                                  ) : null}
+                                </AnimatePresence>
+                              </Td>
+                            </tr>
                           </Fragment>
                         )
                       })}
@@ -1466,10 +1850,29 @@ export function DashboardOverview({
                 </TableWrapper>
 
                 <div className='flex flex-col gap-3 md:flex-row md:items-center md:justify-between'>
-                  <p className='text-sm text-[var(--muted)]'>
-                    当前第 {page} / {totalPages} 页，共 {formatNumber(totalLogs)} 条
-                  </p>
-                  <div className='flex gap-2'>
+                  <div className='flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4'>
+                    <p className='text-sm text-[var(--muted)]'>
+                      当前第 {page} / {totalPages} 页，共 {formatNumber(totalLogs)} 条
+                    </p>
+                    <div className='flex items-center gap-2'>
+                      <span className='text-sm text-[var(--muted)]'>每页</span>
+                      <Select
+                        value={String(pageSize)}
+                        className='h-9 w-24'
+                        onChange={(event) => {
+                          setPageSize(Number(event.target.value))
+                          setPage(1)
+                        }}
+                      >
+                        {PAGE_SIZE_OPTIONS.map((size) => (
+                          <option key={size} value={size}>
+                            {size}
+                          </option>
+                        ))}
+                      </Select>
+                    </div>
+                  </div>
+                  <div className='grid grid-cols-2 gap-2 sm:flex'>
                     <Button
                       variant='secondary'
                       size='sm'
@@ -1496,6 +1899,8 @@ export function DashboardOverview({
             )}
           </CardContent>
         </Card>
+        </Reveal>
+        </>
       </div>
 
       <Dialog
@@ -1612,35 +2017,43 @@ export function DashboardOverview({
         open={chatToolsOpen}
         onClose={() => setChatToolsOpen(false)}
         title='选择聊天工具'
+        description='选择一个工具后会进入当前控制台内的聊天页面，令牌和 API 地址会自动带入。'
       >
         <div className='space-y-4 p-6'>
           {genericChatTemplates.length ? (
-            <div className='grid gap-3 md:grid-cols-[minmax(220px,1fr)_auto] md:items-center'>
-              <Select
-                value={activeChatTemplateName}
-                onChange={(event) => setSelectedChatTemplateName(event.target.value)}
-                aria-label='选择聊天工具'
-              >
-                {genericChatTemplates.map((template) => (
-                  <option key={template.name} value={template.name}>
-                    {template.name}
-                  </option>
-                ))}
-              </Select>
-              <Button
-                size='sm'
-                onClick={() => {
-                  if (!chatTargetToken) {
-                    return
-                  }
-                  void handleOpenChatTemplate(chatTargetToken)
-                }}
-                disabled={!chatTargetToken || loadingTokenId === chatTargetToken.id}
-              >
-                <ExternalLink className='mr-2 size-4' />
-                打开聊天工具
-              </Button>
-            </div>
+            <>
+              <div className='grid gap-3 md:grid-cols-[minmax(220px,1fr)_auto] md:items-center'>
+                <Select
+                  value={activeChatTemplateName}
+                  onChange={(event) => setSelectedChatTemplateName(event.target.value)}
+                  aria-label='选择聊天工具'
+                >
+                  {genericChatTemplates.map((template) => (
+                    <option key={template.name} value={template.name}>
+                      {template.name}
+                    </option>
+                  ))}
+                </Select>
+                <Button
+                  size='sm'
+                  className='w-full md:w-auto'
+                  onClick={() => {
+                    if (!chatTargetToken) {
+                      return
+                    }
+                    void handleOpenChatTemplate(chatTargetToken)
+                  }}
+                  disabled={!chatTargetToken || loadingTokenId === chatTargetToken.id}
+                >
+                  {chatTargetToken && loadingTokenId === chatTargetToken.id ? (
+                    <RefreshCw className='mr-2 size-4 animate-spin' />
+                  ) : (
+                    <ExternalLink className='mr-2 size-4' />
+                  )}
+                  打开
+                </Button>
+              </div>
+            </>
           ) : systemStatus?.chats?.length ? (
             <div className='rounded-[var(--radius-lg)] border border-dashed border-[var(--border)] bg-[var(--surface)] p-4 text-sm text-[var(--muted)]'>
               当前模板暂不支持

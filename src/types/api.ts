@@ -129,6 +129,20 @@ export type QuotaDataPoint = {
   quota?: number
 }
 
+export type UsageTrendBucket = {
+  timestamp: number
+  quota: number
+  count: number
+  token_used: number
+}
+
+export type UsageTrendResponse = ApiResponse<{
+  start_timestamp: number
+  end_timestamp: number
+  bucket_size: 3600 | 86400
+  points: UsageTrendBucket[]
+}>
+
 export type PricingVendor = {
   id: number
   name: string
@@ -141,13 +155,22 @@ export type PricingPreviewItem = {
   description?: string
   icon?: string
   tags?: string
+  vendor_id?: number
   quota_type: number
   model_ratio: number
   model_price: number
   owner_by: string
   completion_ratio: number
+  cache_ratio?: number
+  create_cache_ratio?: number
+  image_ratio?: number
+  audio_ratio?: number
+  audio_completion_ratio?: number
   enable_groups: string[]
   supported_endpoint_types: string[]
+  billing_mode?: string
+  billing_expr?: string
+  pricing_version?: string
 }
 
 export type PricingResponse = {

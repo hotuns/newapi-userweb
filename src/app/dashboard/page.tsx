@@ -26,14 +26,6 @@ export default async function DashboardPage() {
   startOfToday.setHours(0, 0, 0, 0)
   const todayStartTimestamp = Math.floor(startOfToday.getTime() / 1000)
 
-  const startOfThreeDays = new Date(startOfToday)
-  startOfThreeDays.setDate(startOfThreeDays.getDate() - 2)
-  const threeDayStartTimestamp = Math.floor(startOfThreeDays.getTime() / 1000)
-
-  const startOfSevenDays = new Date(startOfToday)
-  startOfSevenDays.setDate(startOfSevenDays.getDate() - 6)
-  const sevenDayStartTimestamp = Math.floor(startOfSevenDays.getTime() / 1000)
-
   const initialLogQuery = buildQueryString({
     p: 1,
     page_size: 10,
@@ -54,23 +46,11 @@ export default async function DashboardPage() {
       getTopupRecords(buildQueryString({ p: 1, page_size: 20 })),
     ])
 
-  const [trendToday, trendThreeDays, trendSevenDays, initialLogs] =
+  const [trendToday, initialLogs] =
     await Promise.all([
       getUserQuotaData(
         buildQueryString({
           start_timestamp: todayStartTimestamp,
-          end_timestamp: endTimestamp,
-        })
-      ),
-      getUserQuotaData(
-        buildQueryString({
-          start_timestamp: threeDayStartTimestamp,
-          end_timestamp: endTimestamp,
-        })
-      ),
-      getUserQuotaData(
-        buildQueryString({
-          start_timestamp: sevenDayStartTimestamp,
           end_timestamp: endTimestamp,
         })
       ),
@@ -96,8 +76,6 @@ export default async function DashboardPage() {
         subscription={subscription}
         subscriptionPlans={subscriptionPlans}
         trendToday={trendToday}
-        trendThreeDays={trendThreeDays}
-        trendSevenDays={trendSevenDays}
         initialLogs={initialLogs}
         topupInfo={topupInfo}
         topupRecords={topupRecords}

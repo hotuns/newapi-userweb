@@ -13,7 +13,7 @@ export function TableWrapper({
   return (
     <div
       className={cn(
-        'overflow-hidden rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--surface)]',
+        'overflow-x-auto rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--surface)]',
         className
       )}
       {...props}
@@ -25,7 +25,7 @@ export function Table({
   className,
   ...props
 }: TableHTMLAttributes<HTMLTableElement>) {
-  return <table className={cn('w-full border-collapse', className)} {...props} />
+  return <table className={cn('min-w-[720px] w-full border-collapse', className)} {...props} />
 }
 
 export function TableHead({
