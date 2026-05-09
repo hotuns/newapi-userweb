@@ -55,7 +55,6 @@ import type {
   Announcement,
   ApiResponse,
   PaginatedResponse,
-  QuotaDataPoint,
   SubscriptionPlan,
   SubscriptionSummary,
   SystemStatus,
@@ -79,7 +78,7 @@ type DashboardOverviewProps = {
   tokens: PaginatedResponse<TokenRecord>
   subscription: ApiResponse<SubscriptionSummary>
   subscriptionPlans: ApiResponse<Array<{ plan: SubscriptionPlan }>>
-  trendToday: ApiResponse<QuotaDataPoint[]>
+  initialTodayTrend: UsageTrendResponse
   initialLogs: PaginatedResponse<UsageLog>
   topupInfo: ApiResponse<TopupInfo>
   topupRecords: PaginatedResponse<TopupRecord>
@@ -544,7 +543,7 @@ function formatTrendTooltipLabel(timestamp: number, range: TrendRangeKey) {
   }).format(date)
 }
 
-function sumQuotaDataPoints(points: QuotaDataPoint[] | undefined): UsageSummary {
+function sumUsageTrendBuckets(points: UsageTrendBucket[] | undefined): UsageSummary {
   return (points ?? []).reduce(
     (total, point) => ({
       quota: total.quota + Number(point.quota ?? 0),
@@ -903,7 +902,7 @@ export function DashboardOverview({
   tokens,
   subscription,
   subscriptionPlans,
-  trendToday,
+  initialTodayTrend,
   initialLogs,
   topupInfo,
   topupRecords,
@@ -921,7 +920,6 @@ export function DashboardOverview({
   const activePlan =
     activeSubscription?.plan ??
     planList.find((item) => item.plan.id === activeSubscription?.subscription?.plan_id)?.plan
-  const todaySummary = sumQuotaDataPoints(trendToday.data)
   const dashboardTokens = tokens.data?.items ?? EMPTY_DASHBOARD_TOKENS
   const genericChatTemplates = useMemo(
     () => parseGenericChatTemplates(systemStatus?.chats),
@@ -1053,6 +1051,7 @@ export function DashboardOverview({
         : undefined,
   })
   const trendRangeWindow = getTrendRangeWindow(trendRange)
+  const todayTrendWindow = getTrendRangeWindow('today')
   const trendLogQuery = buildQueryString({
     start_timestamp: trendRangeWindow.startTimestamp,
     end_timestamp: trendRangeWindow.endTimestamp,
@@ -1060,6 +1059,30 @@ export function DashboardOverview({
     model_name: deferredModelFilter,
     token_name: deferredTokenFilter,
     request_id: deferredRequestIdFilter,
+  })
+  const todayTrendQueryString = buildQueryString({
+    start_timestamp: todayTrendWindow.startTimestamp,
+    end_timestamp: todayTrendWindow.endTimestamp,
+    bucket_size: todayTrendWindow.bucketSize,
+    model_name: deferredModelFilter,
+    token_name: deferredTokenFilter,
+    request_id: deferredRequestIdFilter,
+  })
+  const todayTrendQuery = useQuery({
+    queryKey: [
+      'dashboard-usage-trend',
+      'today',
+      deferredModelFilter,
+      deferredTokenFilter,
+      deferredRequestIdFilter,
+    ],
+    queryFn: () =>
+      fetchJson<UsageTrendResponse>(`/api/dashboard/usage-trend?${todayTrendQueryString}`),
+    placeholderData: keepPreviousData,
+    initialData:
+      !deferredModelFilter && !deferredTokenFilter && !deferredRequestIdFilter
+        ? initialTodayTrend
+        : undefined,
   })
   const trendQuery = useQuery({
     queryKey: [
@@ -1074,6 +1097,8 @@ export function DashboardOverview({
     placeholderData: keepPreviousData,
   })
   const currentTrendPoints = trendQuery.data?.data?.points ?? EMPTY_TREND_POINTS
+  const todayTrendPoints = todayTrendQuery.data?.data?.points ?? EMPTY_TREND_POINTS
+  const todaySummary = sumUsageTrendBuckets(todayTrendPoints)
 
   const loadFullTokenValue = useCallback(async (tokenId: number) => {
     if (revealedKeys[tokenId]) {

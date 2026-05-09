@@ -1,5 +1,6 @@
 import { DashboardLayout } from '@/components/shell/dashboard-layout'
 import { requireAuth } from '@/lib/auth'
+import { getUsageTrend } from '@/lib/dashboard-usage-trend'
 import { getNewApiBaseUrl } from '@/lib/env'
 import { buildQueryString } from '@/lib/utils'
 import {
@@ -12,7 +13,6 @@ import {
   getTopupRecords,
   getUserLogs,
   getUserModels,
-  getUserQuotaData,
   getTokens,
 } from '@/lib/server-fetch'
 import { DashboardOverview } from '@/features/dashboard/components/dashboard-overview'
@@ -46,14 +46,13 @@ export default async function DashboardPage() {
       getTopupRecords(buildQueryString({ p: 1, page_size: 20 })),
     ])
 
-  const [trendToday, initialLogs] =
+  const [initialTodayTrend, initialLogs] =
     await Promise.all([
-      getUserQuotaData(
-        buildQueryString({
-          start_timestamp: todayStartTimestamp,
-          end_timestamp: endTimestamp,
-        })
-      ),
+      getUsageTrend({
+        startTimestamp: todayStartTimestamp,
+        endTimestamp,
+        bucketSize: 3600,
+      }),
       getUserLogs(initialLogQuery),
     ])
 
@@ -75,7 +74,7 @@ export default async function DashboardPage() {
         tokens={tokens}
         subscription={subscription}
         subscriptionPlans={subscriptionPlans}
-        trendToday={trendToday}
+        initialTodayTrend={initialTodayTrend}
         initialLogs={initialLogs}
         topupInfo={topupInfo}
         topupRecords={topupRecords}
